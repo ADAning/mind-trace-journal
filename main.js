@@ -6742,6 +6742,29 @@ var JournalView = class extends import_obsidian4.ItemView {
     }
     this.renderWeeklyReportCard(this.weeklyReportCardEl.parentElement, this.weeklyReportCardEl);
   }
+  renderReportStatsCard(container) {
+    const allEntries = collectMetrics(this.app).entries;
+    const reportFiles = collectWeeklyReportFiles(this.app);
+    const days = new Set(allEntries.map((entry) => entry.date)).size;
+    const sessions = allEntries.reduce((sum, entry) => sum + entry.sessions, 0);
+    const streaks = calculateStreaks(allEntries);
+    const card = container.createEl("section", { cls: "mind-trace-record-card mind-trace-report-stats-card" });
+    const header = card.createDiv({ cls: "mind-trace-lead-card-header" });
+    header.createDiv({ cls: "mind-trace-home-section-title", text: "报告统计", attr: { role: "heading", "aria-level": "2" } });
+    const rows = [
+      ["周报数量", reportFiles.length],
+      ["累计记录日", days],
+      ["累计记录篇数", sessions],
+      ["当前连续记录", streaks.current],
+      ["最长连续记录", streaks.longest]
+    ];
+    const body = card.createDiv({ cls: "mind-trace-report-stats-body" });
+    for (const [label, value] of rows) {
+      const row = body.createDiv({ cls: "mind-trace-report-stats-row" });
+      row.createSpan({ text: label });
+      row.createEl("strong", { text: String(value) });
+    }
+  }
   renderRecordHistory(container, entries) {
     const card = container.createEl("section", { cls: "mind-trace-record-card" });
     card.createDiv({ cls: "mind-trace-home-section-title", text: "记录履历", attr: { role: "heading", "aria-level": "2" } });
@@ -7319,6 +7342,7 @@ var JournalView = class extends import_obsidian4.ItemView {
     heading.createEl("p", { text: "支持自然周报告，自动整合本地日记与事件图谱。" });
     const lead = shell.createDiv({ cls: "mind-trace-home-lead-grid" });
     this.renderWeeklyReportCard(lead);
+    this.renderReportStatsCard(lead);
     void this.loadWeeklyReportCard();
     const section = shell.createEl("section", { cls: "mind-trace-reports-list-section" });
     section.createDiv({

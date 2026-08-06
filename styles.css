@@ -299,9 +299,9 @@
 }
 
 .mind-trace-journal-shell {
-  width: min(100%, 1040px);
+  width: min(100%, 1120px);
   margin: 0 auto;
-  padding: clamp(28px, 5vw, 68px) clamp(22px, 5vw, 56px) 80px;
+  padding: clamp(28px, 5vw, 60px) clamp(20px, 4vw, 48px) 80px;
 }
 
 .mind-trace-journal-header {
@@ -2762,7 +2762,7 @@ input.mind-trace-facet-category:focus {
 
 @container (max-width: 760px) {
   .mind-trace-journal-shell {
-    padding: 32px 22px 64px;
+    padding: 28px 22px 64px;
   }
 
   .mind-trace-journal-header,
@@ -4484,9 +4484,9 @@ button.mind-trace-event-ledger-title:hover {
 }
 
 .mind-trace-home-shell {
-  width: min(100%, 1040px);
+  width: min(100%, 1120px);
   margin: 0 auto;
-  padding: clamp(28px, 5vw, 68px) clamp(22px, 5vw, 56px) 80px;
+  padding: clamp(28px, 5vw, 60px) clamp(20px, 4vw, 48px) 80px;
 }
 
 .mind-trace-home-header {
@@ -5033,10 +5033,6 @@ button.mind-trace-event-ledger-title:hover {
 }
 
 /* Personal observatory */
-.mind-trace-home-shell {
-  width: min(100%, 1120px);
-  padding-top: clamp(34px, 6vw, 76px);
-}
 
 .mind-trace-home-title {
   font-family: var(--font-interface);
@@ -5231,6 +5227,30 @@ button.mind-trace-week-node:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--size-4-3);
+}
+
+.mind-trace-report-stats-body {
+  margin-top: var(--size-4-3);
+}
+
+.mind-trace-report-stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-3-3);
+  padding: var(--size-3-3) 0;
+  border-bottom: 1px solid var(--mind-trace-hairline);
+  color: var(--text-muted);
+  font-size: var(--font-smallest);
+}
+
+.mind-trace-report-stats-row:last-child {
+  border-bottom: 0;
+}
+
+.mind-trace-report-stats-row strong {
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
 }
 
 .mind-trace-period-label,
@@ -7150,7 +7170,11 @@ button.mind-trace-theme-filter-button:hover {
   }
 
   .mind-trace-page-shell {
-    padding-top: 28px;
+    padding: 28px 22px 64px;
+  }
+
+  .mind-trace-home-shell {
+    padding: 28px 22px 64px;
   }
 
   .mind-trace-report-list-card {
