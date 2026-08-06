@@ -1,6 +1,6 @@
 .DS_Store
 data.json
-SKILL.md
+AGENTS.md
 node_modules/
 *.log
 .env
