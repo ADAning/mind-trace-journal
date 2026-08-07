@@ -92,16 +92,27 @@ function startOfLocalWeek(date) {
   return addLocalDays(day, -mondayOffset);
 }
 function completedPeriod(type = "weekly", now = /* @__PURE__ */ new Date()) {
-  if (type !== "weekly") {
-    throw new Error(`暂不支持 ${type} 周期`);
+  if (type === "weekly") {
+    const end = addLocalDays(startOfLocalWeek(now), -1);
+    const start = addLocalDays(end, -6);
+    return {
+      type,
+      start: localDateString(start),
+      end: localDateString(end)
+    };
   }
-  const end = addLocalDays(startOfLocalWeek(now), -1);
-  const start = addLocalDays(end, -6);
-  return {
-    type,
-    start: localDateString(start),
-    end: localDateString(end)
-  };
+  if (type === "monthly") {
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = addLocalDays(currentMonthStart, -1);
+    const start = new Date(end.getFullYear(), end.getMonth(), 1);
+    return {
+      type,
+      start: localDateString(start),
+      end: localDateString(end),
+      status: "complete"
+    };
+  }
+  throw new Error(`暂不支持 ${type} 周期`);
 }
 function currentWeekPeriod(now = /* @__PURE__ */ new Date()) {
   const start = startOfLocalWeek(now);
@@ -111,17 +122,78 @@ function currentWeekPeriod(now = /* @__PURE__ */ new Date()) {
     end: localDateString(now)
   };
 }
+function currentMonthPeriod(now = /* @__PURE__ */ new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return {
+    type: "monthly",
+    start: localDateString(start),
+    end: localDateString(now),
+    status: "partial"
+  };
+}
 function previousPeriod(period) {
   const start = parseLocalDate(period.start);
   if (start === null) {
     throw new Error("报告周期日期无效");
   }
   const end = addLocalDays(start, -1);
+  if (period.type === "monthly") {
+    return {
+      type: "monthly",
+      start: localDateString(new Date(end.getFullYear(), end.getMonth(), 1)),
+      end: localDateString(end),
+      status: "complete"
+    };
+  }
   return {
     type: period.type,
     start: localDateString(addLocalDays(end, -6)),
     end: localDateString(end)
   };
+}
+function comparisonPeriod(period) {
+  if (period.type !== "monthly") {
+    return previousPeriod(period);
+  }
+  const start = parseLocalDate(period.start);
+  const end = parseLocalDate(period.end);
+  if (start === null || end === null) {
+    throw new Error("报告周期日期无效");
+  }
+  const previousStart = new Date(start.getFullYear(), start.getMonth() - 1, 1);
+  const previousMonthEnd = new Date(start.getFullYear(), start.getMonth(), 0);
+  const elapsedDays = Math.max(1, localDayOrdinal(end) - localDayOrdinal(start) + 1);
+  const previousEnd = period.status === "partial" ? new Date(Math.min(
+    previousMonthEnd.getTime(),
+    addLocalDays(previousStart, elapsedDays - 1).getTime()
+  )) : previousMonthEnd;
+  return {
+    type: "monthly",
+    start: localDateString(previousStart),
+    end: localDateString(previousEnd),
+    status: period.status === "partial" ? "partial" : "complete"
+  };
+}
+function periodWeekStart(dateString) {
+  const date = parseLocalDate(dateString);
+  return date === null ? null : localDateString(startOfLocalWeek(date));
+}
+function activeWeekStats(entries, period) {
+  const grouped = new Map();
+  for (const entry of entries) {
+    const weekStart = periodWeekStart(entry.date);
+    if (weekStart === null) {
+      continue;
+    }
+    const values = grouped.get(weekStart) ?? [];
+    values.push(entry);
+    grouped.set(weekStart, values);
+  }
+  return [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([start, values]) => {
+    const weekEnd = localDateString(addLocalDays(parseLocalDate(start), 6));
+    const stats = metricSnapshot(values);
+    return { start, end: weekEnd, ...stats };
+  }).filter((item) => item.start <= period.end && item.end >= period.start);
 }
 function periodEntries(entries, period) {
   return entries.filter((entry) => entry.date >= period.start && entry.date <= period.end);
@@ -1315,6 +1387,9 @@ var DEFAULT_SETTINGS = {
   weeklyReportMinimumDays: 3,
   weeklyEventLimit: 50,
   weeklyGraphEventLimit: 20,
+  monthlyReportAutoGenerate: true,
+  monthlyReportMinimumWeeks: 4,
+  monthlyGraphEventLimit: 100,
   security: {
     version: 1,
     salt: "",
@@ -1702,6 +1777,8 @@ function llmOperationLabel(operation) {
       return "修正返回格式";
     case "weekly-report":
       return "生成周报";
+    case "monthly-report":
+      return "生成月报";
     case "event-backfill":
       return "校准本周事件";
     case "test":
@@ -2336,7 +2413,7 @@ function normalizeEvent(event) {
     relations.push({ ...relation, subject: entityMap.get(subjectKey), object: entityMap.get(objectKey) });
   }
   const elements = [...new Map(arguments2.map((argument) => [eventEntityKey(argument.entity), argument.entity])).values()];
-  return { id, type, title, summary, arguments: arguments2, relations, elements, legacy: event?.legacy === true };
+  return { id, type, title, summary, arguments: arguments2, relations, elements };
 }
 function validateEvents(events, allowEmpty = true) {
   if (!Array.isArray(events) || events.length > MAX_SESSION_EVENTS || !allowEmpty && events.length === 0) {
@@ -2514,6 +2591,43 @@ function buildWeeklyReportMessages(source, settings) {
     }
   ];
 }
+function monthlyStatsText(current, comparison, periodStatus = "complete") {
+  const comparisonLabel = periodStatus === "partial" ? "上月同期" : "上月";
+  const score = (value) => value === null ? "无数据" : value.toFixed(1);
+  const delta = (key) => current[key] === null || comparison[key] === null ? "无法对比" : `${current[key] - comparison[key] >= 0 ? "+" : ""}${(current[key] - comparison[key]).toFixed(1)}`;
+  return [
+    `记录 ${current.days} 天、${current.sessions} 篇，活跃自然周 ${current.activeWeeks} 周`,
+    `心情 ${score(current.mood)}（较${comparisonLabel} ${delta("mood")}）`,
+    `精力 ${score(current.energy)}（较${comparisonLabel} ${delta("energy")}）`,
+    `压力 ${score(current.stress)}（较${comparisonLabel} ${delta("stress")}）`,
+    `常见主题：${current.themes.length > 0 ? current.themes.map((item) => `${item.theme}（${item.days}天）`).join("、") : "无"}`
+  ].join("\n");
+}
+function buildMonthlyReportMessages(source, settings) {
+  const custom = settings.customInstructions.trim().length > 0 ? `\n用户表达偏好：${settings.customInstructions.trim()}` : "";
+  const rhythm = source.weekStats.map((week) => `${week.start} 至 ${week.end}：${week.days} 天、${week.sessions} 篇；心情 ${week.mood === null ? "无" : week.mood.toFixed(1)}，精力 ${week.energy === null ? "无" : week.energy.toFixed(1)}，压力 ${week.stress === null ? "无" : week.stress.toFixed(1)}`).join("\n");
+  return [
+    {
+      role: "system",
+      content: [
+        "你是一位谨慎、具体的中文个人月报分析助手。",
+        "只使用给定的日记和本地统计；不虚构数字、日期、原因或完成情况。",
+        "先用月内节奏概括自然周之间的起伏，再总结变化、保留有边界的可能原因，最后提出下月最小的一步。",
+        "rhythm、changes、possibleCauses 的 evidenceDates 只能使用输入中出现且位于本月周期的 YYYY-MM-DD 日期。",
+        "情绪解读必须是假设性的，同时给出支持线索和另一种可能解释，不进行心理或医学诊断。",
+        "rhythm 至少返回一个对象，每个对象包含 observation 和 evidenceDates；themes 至少返回一个对象。",
+        TONE_INSTRUCTIONS[settings.reflectionTone],
+        custom,
+        SAFETY_INSTRUCTION,
+        '只输出 JSON：{"summary":"...","rhythm":[{"observation":"...","evidenceDates":["YYYY-MM-DD"]}],"changes":[{"observation":"...","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"...","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"...","clues":["..."],"alternative":"..."},"themes":[{"name":"...","observation":"..."}],"nextStep":{"action":"...","reason":"..."},"selfQuestion":"..."}'
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: `报告周期：${source.period.start} 至 ${source.period.end}（${source.period.status === "partial" ? "截至今天的部分预览" : "完整自然月"}）\n\n本地确定性统计：\n${monthlyStatsText(source.stats, source.previousStats, source.period.status)}\n\n月度节律轴：\n${rhythm || "暂无活跃自然周"}\n\n日记摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
+    }
+  ];
+}
 function buildEventBackfillMessages(sessions, knownElements = [], maximum = 50, preservedSessions = []) {
   return [
     {
@@ -2543,8 +2657,8 @@ function eventBackfillSessionText(session) {
 }
 function buildRepairMessages(raw, shape) {
   const eventSchema = '{"type":"interaction|decision|action|progress|obstacle|change|experience|other","title":"string","summary":"string","arguments":[{"role":"actor|participant|counterparty|recipient|target|object|context|location|cause|outcome|related","label":"string","entity":{"kind":"person|group|organization|project|product|place|activity|object|topic","name":"string"}}],"relations":[{"type":"affiliation|social|ownership|part_of|dependency|collaboration|located_in|other","label":"string","subject":{"kind":"...","name":"string"},"object":{"kind":"...","name":"string"}}]}';
-  const schema = shape === "follow-up" ? '{"question":"string","continue":boolean}' : shape === "journal" ? `{"diary":"string","events":[${eventSchema}],"facets":[{"category":"string","summary":"string"}],"insights":["string"],"microAction":"string","selfQuestion":"string","themes":["string"]}` : shape === "event-backfill" ? `{"sessions":[{"id":"string","date":"YYYY-MM-DD","time":"HH:mm","events":[${eventSchema}]}]}` : shape === "weekly-report" ? '{"summary":"string","changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : '{"mood":{"score":3,"reason":"string"},"energy":{"score":3,"reason":"string"},"stress":{"score":3,"reason":"string"}}';
-  const constraints = shape === "journal" ? "events 需为 0–20 个，事件各含 1–16 个合法 arguments 和 0–12 个 relations；facets 需有 2–6 个且 category 互不重复，insights 需根据信息量动态给出 2–4 条，themes 需有 1–5 个。" : shape === "event-backfill" ? "保留 sessions 的 date 和 time，每个 events 为 0–20 个，所有关系端点必须属于同一事件的论元。" : shape === "rating" ? "三个 score 均需为 1–5 的整数，每项 reason 均不能为空。" : "";
+  const schema = shape === "follow-up" ? '{"question":"string","continue":boolean}' : shape === "journal" ? `{"diary":"string","events":[${eventSchema}],"facets":[{"category":"string","summary":"string"}],"insights":["string"],"microAction":"string","selfQuestion":"string","themes":["string"]}` : shape === "event-backfill" ? `{"sessions":[{"id":"string","date":"YYYY-MM-DD","time":"HH:mm","events":[${eventSchema}]}]}` : shape === "weekly-report" ? '{"summary":"string","changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : shape === "monthly-report" ? '{"summary":"string","rhythm":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : '{"mood":{"score":3,"reason":"string"},"energy":{"score":3,"reason":"string"},"stress":{"score":3,"reason":"string"}}';
+  const constraints = shape === "journal" ? "events 需为 0–20 个，事件各含 1–16 个合法 arguments 和 0–12 个 relations；facets 需有 2–6 个且 category 互不重复，insights 需根据信息量动态给出 2–4 条，themes 需有 1–5 个。" : shape === "event-backfill" ? "保留 sessions 的 date 和 time，每个 events 为 0–20 个，所有关系端点必须属于同一事件的论元。" : shape === "monthly-report" ? "rhythm、changes、possibleCauses 均需为带 evidenceDates 的非空数组，日期必须位于月报周期；emotionReading、themes、nextStep 与 selfQuestion 不能为空。" : shape === "rating" ? "三个 score 均需为 1–5 的整数，每项 reason 均不能为空。" : "";
   return [
     {
       role: "system",
@@ -2596,6 +2710,50 @@ function parseWeeklyReport(raw, period) {
   }
   return {
     summary: stringField(value, "summary"),
+    changes,
+    possibleCauses,
+    emotionReading: {
+      hypothesis: stringField(emotion, "hypothesis"),
+      clues: emotionClues,
+      alternative: stringField(emotion, "alternative")
+    },
+    themes: reportObjectArray(value, "themes", ["name", "observation"]),
+    nextStep: {
+      action: stringField(nextStep, "action"),
+      reason: stringField(nextStep, "reason")
+    },
+    selfQuestion: stringField(value, "selfQuestion")
+  };
+}
+function parseMonthlyReport(raw, period) {
+  const value = objectValue(raw);
+  const emotion = value.emotionReading;
+  const nextStep = value.nextStep;
+  if (typeof emotion !== "object" || emotion === null || Array.isArray(emotion) || typeof nextStep !== "object" || nextStep === null || Array.isArray(nextStep)) {
+    throw new Error("模型结果缺少月报结构");
+  }
+  const parseEvidenceItems = (key, field) => {
+    const raw = value[key];
+    const normalized = key === "rhythm" && typeof raw === "object" && raw !== null && !Array.isArray(raw) ? [raw] : raw;
+    const items = reportObjectArray({ [key]: normalized }, key, [field]);
+    for (const item of items) {
+      if (!Array.isArray(item.evidenceDates)) {
+        throw new Error("月报证据日期格式不正确");
+      }
+      item.evidenceDates = item.evidenceDates.filter((date) => date >= period.start && date <= period.end && parseLocalDate(date) !== null);
+    }
+    return items;
+  };
+  const rhythm = parseEvidenceItems("rhythm", "observation");
+  const changes = parseEvidenceItems("changes", "observation");
+  const possibleCauses = parseEvidenceItems("possibleCauses", "hypothesis");
+  const emotionClues = stringArrayField(emotion, "clues");
+  if (emotionClues.length === 0) {
+    throw new Error("AI 情绪假设至少需要一条文字线索");
+  }
+  return {
+    summary: stringField(value, "summary"),
+    rhythm,
     changes,
     possibleCauses,
     emotionReading: {
@@ -2820,6 +2978,15 @@ async function generateWeeklyReport(provider, source, settings) {
     raw,
     "weekly-report",
     (value) => parseWeeklyReport(value, source.period)
+  );
+}
+async function generateMonthlyReport(provider, source, settings) {
+  const raw = await provider.generate(buildMonthlyReportMessages(source, settings), "monthly-report");
+  return parseWithRepair(
+    provider,
+    raw,
+    "monthly-report",
+    (value) => parseMonthlyReport(value, source.period)
   );
 }
 async function generateEventBackfill(provider, sessions, knownElements = [], maximum = 50, preservedSessions = []) {
@@ -3290,25 +3457,36 @@ function parseFacets(section) {
 function parseEventSectionMeta(section) {
   const raw = /<!--\s*mind-trace-events:\s*(\{[^\n]+\})\s*-->/.exec(section)?.[1];
   if (raw === void 0) {
-    return { schema: 2, source: "legacy", reviewed: true };
+    throw new Error("事件章节缺少版本标记");
   }
-  try {
-    const value = JSON.parse(raw);
-    return {
-      schema: Number(value.schema) === 3 ? 3 : 2,
-      source: ["daily", "weekly", "manual", "legacy"].includes(value.source) ? value.source : "legacy",
-      reviewed: value.reviewed === true
-    };
-  } catch {
-    return { schema: 2, source: "legacy", reviewed: true };
+  const value = JSON.parse(raw);
+  if (Number(value.schema) !== 3) {
+    throw new Error("事件章节版本不受支持");
   }
+  return {
+    schema: 3,
+    source: ["daily", "weekly", "manual"].includes(value.source) ? value.source : "daily",
+    reviewed: value.reviewed === true
+  };
 }
 function parseSavedEvents(block) {
   if (!block.includes("### 今日事件")) {
     return { state: "missing", events: [] };
   }
   const section = sectionBlock(block, "今日事件");
-  const meta = parseEventSectionMeta(section);
+  let meta;
+  try {
+    meta = parseEventSectionMeta(section);
+  } catch (error) {
+    return {
+      state: "invalid",
+      events: [],
+      schema: 3,
+      source: "daily",
+      reviewed: false,
+      error: error instanceof Error ? error.message : "事件章节版本无法识别"
+    };
+  }
   if (section.length === 0 || section.includes("今天没有提取到明确事件")) {
     return { state: "ready", events: [], ...meta };
   }
@@ -3376,7 +3554,7 @@ function parseSavedEvents(block) {
           });
         }
       }
-      return { id, type, title, summary, arguments: arguments2, relations, legacy: meta.schema < 3 };
+      return { id, type, title, summary, arguments: arguments2, relations };
     });
     return { state: "ready", events: validateEvents(events), ...meta };
   } catch (error) {
@@ -3447,8 +3625,8 @@ function parseSavedJournal(content, frontmatter) {
       diary: sectionText(block, "日记"),
       events: savedEvents.events,
       eventState: savedEvents.state,
-      eventSchema: savedEvents.schema ?? 2,
-      eventSource: savedEvents.source ?? "legacy",
+      eventSchema: savedEvents.schema ?? 3,
+      eventSource: savedEvents.source ?? "daily",
       eventReviewed: savedEvents.reviewed === true,
       ...(savedEvents.error === void 0 ? {} : { eventError: savedEvents.error }),
       facets: parseFacets(sectionText(block, "今日切片")),
@@ -3959,8 +4137,7 @@ function journalEventRecords(document2, filePath = "") {
     summary: event.summary,
     arguments: event.arguments,
     relations: event.relations,
-    elements: event.elements,
-    legacy: event.legacy === true
+    elements: event.elements
   })));
 }
 function aggregateEventRecords(records, nodeLimit = 10) {
@@ -4044,9 +4221,6 @@ function renderEventLedger(container, events, options = {}) {
       const pill = elements.createSpan({ cls: `mind-trace-event-element is-${argument.entity.kind}` });
       pill.createSpan({ text: argument.label });
       pill.createEl("strong", { text: argument.entity.name });
-    }
-    if (event.legacy === true) {
-      elements.createSpan({ cls: "mind-trace-event-legacy-badge", text: "旧结构" });
     }
     if ((event.relations ?? []).length > 0) {
       const relations = card.createDiv({ cls: "mind-trace-event-ledger-relations", attr: { "aria-label": "明确关系" } });
@@ -4858,14 +5032,15 @@ function parseWeeklyEvidenceItems(section, label) {
   }
   return items;
 }
-function validWeeklyMetricValue(value, allowDays = false) {
+function validWeeklyMetricValue(value, unit = null) {
   const normalized = stripWeeklyInlineMarkdown(value).replace(/\s+/g, " ");
   if (normalized === "—") {
     return normalized;
   }
-  const pattern = allowDays ? /^[+-]?\d+(?:\.\d+)?(?: 天)?$/ : /^[+-]?\d+(?:\.\d+)?$/;
+  const unitPattern = unit === "天" || unit === "周" ? `(?:\\s*${unit})?` : "";
+  const pattern = new RegExp(`^[+-]?\\d+(?:\\.\\d+)?${unitPattern}$`);
   if (!pattern.test(normalized)) {
-    throw new Error(`周报数字格式无法识别：${normalized}`);
+    throw new Error(`报告数字格式无法识别：${normalized}`);
   }
   return normalized;
 }
@@ -4886,11 +5061,12 @@ function parseWeeklyMetrics(section) {
       continue;
     }
     const key = labels[cells[0]];
+    const unit = key === "days" ? "天" : null;
     parsed[key] = {
       key,
       label: cells[0],
-      current: validWeeklyMetricValue(cells[1], key === "days"),
-      delta: validWeeklyMetricValue(cells[2], key === "days")
+      current: validWeeklyMetricValue(cells[1], unit),
+      delta: validWeeklyMetricValue(cells[2], unit)
     };
   }
   for (const key of ["mood", "energy", "stress"]) {
@@ -4951,7 +5127,7 @@ function parseWeeklyEventSnapshot(section) {
   if (section.length === 0) {
     return null;
   }
-  if (section.includes("本周尚没有可用的结构化事件")) {
+  if (section.includes("本周尚没有可用的结构化事件") || section.includes("本月尚没有可用的结构化事件")) {
     return aggregateEventRecords([]);
   }
   const indexMarker = "### 事件索引";
@@ -5013,7 +5189,7 @@ function parseWeeklyEventSnapshot(section) {
       });
     }
     try {
-      const event = validateEvents([{ type, title, summary, arguments: arguments2, relations, legacy: typeLabel.length === 0 }])[0];
+      const event = validateEvents([{ type, title, summary, arguments: arguments2, relations }])[0];
       records.push({ id: `snapshot#${index}`, filePath: "", sessionIndex: -1, eventIndex: index, date, time, ...event });
     } catch {
     }
@@ -5025,7 +5201,7 @@ function parseSavedWeeklyReport(content, frontmatter) {
     throw new Error("这不是可识别的心迹周报");
   }
   const reportVersion = Number(frontmatter["mind-trace-report-version"]);
-  if (reportVersion !== 1 && reportVersion !== 2 && reportVersion !== 3) {
+  if (reportVersion !== 3) {
     throw new Error("周报版本无法识别");
   }
   const periodStart = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
@@ -5077,6 +5253,130 @@ function parseSavedWeeklyReport(content, frontmatter) {
     selfQuestion: question,
     truncated: content.includes("> [!info] 本周日记较长")
   };
+}
+function parseMonthlyMetrics(section) {
+  const parsed = {};
+  for (const line of section.split("\n")) {
+    if (!line.trim().startsWith("|")) {
+      continue;
+    }
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    if (cells.length !== 3) {
+      continue;
+    }
+    const labels = { "记录日": "days", "活跃周": "activeWeeks", "心情": "mood", "精力": "energy", "压力": "stress" };
+    const key = labels[cells[0]];
+    if (key === void 0) {
+      continue;
+    }
+    const unit = key === "days" ? "天" : key === "activeWeeks" ? "周" : null;
+    parsed[key] = { key, label: cells[0], current: validWeeklyMetricValue(cells[1], unit), delta: validWeeklyMetricValue(cells[2], unit) };
+  }
+  for (const key of ["mood", "energy", "stress"]) {
+    if (parsed[key] === void 0) {
+      throw new Error(`月报缺少${key === "mood" ? "心情" : key === "energy" ? "精力" : "压力"}对照数据`);
+    }
+  }
+  return [parsed.mood, parsed.energy, parsed.stress];
+}
+function parseMonthlyRhythm(section, periodStart = "") {
+  const weeks = [];
+  for (const line of section.split("\n")) {
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    if (cells.length !== 6 || !/^\d{2}-\d{2}–\d{2}-\d{2}$/.test(cells[0])) {
+      continue;
+    }
+    const [startLabel, endLabel] = cells[0].split("–");
+    const anchor = parseLocalDate(periodStart) ?? new Date();
+    const toDate = (value) => {
+      const [month, day] = value.split("-").map(Number);
+      const candidates = [-1, 0, 1].map((offset) => new Date(anchor.getFullYear() + offset, month - 1, day));
+      candidates.sort((left, right) => Math.abs(localDayOrdinal(left) - localDayOrdinal(anchor)) - Math.abs(localDayOrdinal(right) - localDayOrdinal(anchor)));
+      return localDateString(candidates[0]);
+    };
+    weeks.push({
+      startLabel,
+      endLabel,
+      days: Number.parseInt(cells[1], 10) || 0,
+      sessions: Number.parseInt(cells[2], 10) || 0,
+      mood: cells[3] === "—" ? null : Number.parseFloat(cells[3]),
+      energy: cells[4] === "—" ? null : Number.parseFloat(cells[4]),
+      stress: cells[5] === "—" ? null : Number.parseFloat(cells[5]),
+      start: toDate(startLabel),
+      end: toDate(endLabel)
+    });
+  }
+  const rhythm = parseWeeklyEvidenceItems(section, "月内节奏");
+  return { weeks, rhythm };
+}
+function parseSavedMonthlyReport(content, frontmatter) {
+  if (frontmatter["mind-trace-report"] !== true || frontmatter["report-type"] !== "monthly") {
+    throw new Error("这不是可识别的心迹月报");
+  }
+  if (Number(frontmatter["mind-trace-report-version"]) !== 3) {
+    throw new Error("月报版本无法识别");
+  }
+  const periodStart = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
+  const periodEnd = typeof frontmatter["period-end"] === "string" ? frontmatter["period-end"] : "";
+  if (parseLocalDate(periodStart) === null || parseLocalDate(periodEnd) === null || periodStart > periodEnd) {
+    throw new Error("月报周期日期无法识别");
+  }
+  const periodStatus = frontmatter["period-status"] === "partial" ? "partial" : "complete";
+  const comparisonStart = typeof frontmatter["comparison-start"] === "string" ? frontmatter["comparison-start"] : "";
+  const comparisonEnd = typeof frontmatter["comparison-end"] === "string" ? frontmatter["comparison-end"] : "";
+  if (parseLocalDate(comparisonStart) === null || parseLocalDate(comparisonEnd) === null || comparisonStart > comparisonEnd) {
+    throw new Error("月报对照周期日期无法识别");
+  }
+  const sourceDays = Number(frontmatter["source-days"]);
+  const sourceSessions = Number(frontmatter["source-sessions"]);
+  const activeWeeks = Number(frontmatter["source-active-weeks"]);
+  if (![sourceDays, sourceSessions, activeWeeks].every((value) => Number.isInteger(value) && value >= 0)) {
+    throw new Error("月报记录数量无法识别");
+  }
+  const generatedAt = typeof frontmatter["generated-at"] === "string" ? frontmatter["generated-at"] : "";
+  if (generatedAt.length === 0 || Number.isNaN(new Date(generatedAt).getTime())) {
+    throw new Error("月报生成时间无法识别");
+  }
+  const summary = stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "本月概览"));
+  const question = stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "留给自己的问题"));
+  const rhythmSection = requiredWeeklyReportSection(content, "月内节奏");
+  const parsedRhythm = parseMonthlyRhythm(rhythmSection, periodStart);
+  const keepPeriodDates = (items) => items.map((item) => ({ ...item, evidenceDates: item.evidenceDates.filter((date) => date >= periodStart && date <= periodEnd) }));
+  const eventSnapshot = parseWeeklyEventSnapshot(weeklyReportSection(content, "本月事件图谱"));
+  const eventCount = Number(frontmatter["event-count"] ?? eventSnapshot?.records.length ?? 0);
+  const eventCoveredSessions = Number(frontmatter["event-covered-sessions"] ?? 0);
+  const eventSourceSessions = Number(frontmatter["event-source-sessions"] ?? sourceSessions);
+  return {
+    reportType: "monthly",
+    reportVersion: 3,
+    periodStart,
+    periodEnd,
+    periodStatus,
+    comparisonStart,
+    comparisonEnd,
+    generatedAt,
+    sourceDays,
+    sourceSessions,
+    activeWeeks,
+    eventCount: Number.isInteger(eventCount) && eventCount >= 0 ? eventCount : 0,
+    eventCoveredSessions: Number.isInteger(eventCoveredSessions) && eventCoveredSessions >= 0 ? eventCoveredSessions : 0,
+    eventSourceSessions: Number.isInteger(eventSourceSessions) && eventSourceSessions >= 0 ? eventSourceSessions : sourceSessions,
+    eventSnapshot,
+    summary,
+    metrics: parseMonthlyMetrics(requiredWeeklyReportSection(content, "本月数字")),
+    weekStats: parsedRhythm.weeks,
+    rhythm: parsedRhythm.rhythm,
+    changes: keepPeriodDates(parseWeeklyEvidenceItems(requiredWeeklyReportSection(content, "发生的变化"), "发生的变化")),
+    possibleCauses: keepPeriodDates(parseWeeklyEvidenceItems(requiredWeeklyReportSection(content, "可能的原因"), "可能的原因")),
+    emotion: parseWeeklyEmotion(requiredWeeklyReportSection(content, "AI 情绪假设")),
+    themes: parseWeeklyThemes(requiredWeeklyReportSection(content, "反复出现的主题")),
+    nextStep: parseWeeklyNextStep(requiredWeeklyReportSection(content, "下月最小的一步")),
+    selfQuestion: question,
+    truncated: content.includes("> [!info] 本月日记较长")
+  };
+}
+function parseSavedReport(content, frontmatter) {
+  return frontmatter["report-type"] === "monthly" ? parseSavedMonthlyReport(content, frontmatter) : parseSavedWeeklyReport(content, frontmatter);
 }
 function weeklyGeneratedAtText(value) {
   const date = new Date(value);
@@ -5756,13 +6056,18 @@ function renderMemoryStarGraph(container, aggregate, options = {}) {
   return { visibleRecords, visibleEventIds, getState: () => ({ activeEvent, activeEntity, scale: view.scale, x: view.x, y: view.y }) };
 }
 function renderWeeklyEventCenter(container, report, options = {}) {
-  const section = options.existingSection ?? container.createEl("section", { cls: "mind-trace-event-section mind-trace-weekly-event-center" });
+  const scope = options.scope ?? "本周";
+  const monthly = options.reportType === "monthly";
+  const section = options.existingSection ?? container.createEl("section", { cls: `mind-trace-event-section mind-trace-weekly-event-center${monthly ? " mind-trace-monthly-event-center" : ""}` });
   section.empty();
   section.addClass("mind-trace-event-section", "mind-trace-weekly-event-center");
+  if (monthly) {
+    section.addClass("mind-trace-monthly-event-center");
+  }
   options.onEventCenter?.(section);
   const heading = section.createDiv({ cls: "mind-trace-card-heading" });
   const copy = heading.createDiv();
-  copy.createDiv({ cls: "mind-trace-card-title", text: "这一周围绕什么展开" });
+  copy.createDiv({ cls: "mind-trace-card-title", text: `${scope}围绕什么展开` });
   copy.createEl("p", { text: "位置只由事件与论元的连接关系决定；选择节点后查看发生时间与完整上下文。" });
   const liveSource = options.eventSource ?? null;
   const aggregate = liveSource?.events ?? report.eventSnapshot ?? aggregateEventRecords([]);
@@ -5771,25 +6076,26 @@ function renderWeeklyEventCenter(container, report, options = {}) {
   if (typeof options.eventError === "string" && options.eventError.length > 0) {
     section.createDiv({ cls: "mind-trace-event-inline-state is-error", text: options.eventError, attr: { role: "alert" } });
   }
-  if (aggregate.records.length > (Number(options.weeklyEventLimit) || 50)) {
-    section.createDiv({ cls: "mind-trace-event-inline-state", text: `本周有 ${aggregate.records.length} 件事件，超过当前上限；人工确认内容仍被完整保留。`, attr: { role: "status" } });
+  const eventLimit = Number(options.eventLimit ?? options.weeklyEventLimit) || (monthly ? 100 : 50);
+  const graphLimit = Number(options.graphEventLimit ?? (monthly ? options.monthlyGraphEventLimit : 20)) || (monthly ? 100 : 20);
+  if (aggregate.records.length > eventLimit) {
+    section.createDiv({ cls: "mind-trace-event-inline-state", text: `${scope}有 ${aggregate.records.length} 件事件，超过当前显示上限；人工确认内容仍被完整保留。`, attr: { role: "status" } });
   }
   if (liveSource !== null && report.eventSnapshot !== null && eventAggregateSignature(liveSource.events) !== eventAggregateSignature(report.eventSnapshot)) {
     const stale = section.createDiv({ cls: "mind-trace-event-snapshot-status" });
     stale.createEl("strong", { text: "当前图谱已根据日记更新" });
-    stale.createSpan({ text: "Markdown 快照仍是上次生成周报时的版本。" });
+    stale.createSpan({ text: `Markdown 快照仍是上次生成${monthly ? "月报" : "周报"}时的版本。` });
   }
   if ((liveSource?.eventInvalidSessions.length ?? 0) > 0) {
     section.createDiv({ cls: "mind-trace-event-inline-state is-error", text: `${liveSource.eventInvalidSessions.length} 篇记录的事件章节格式无法识别，请从原始 Markdown 修复。`, attr: { role: "alert" } });
   }
-  const legacyCount = liveSource?.eventLegacySessions.length ?? 0;
   const calibrationCount = liveSource?.eventCalibrationSessions.length ?? 0;
-  if (legacyCount + calibrationCount > 0 && options.onBackfillEvents !== void 0) {
+  if (calibrationCount > 0 && options.onBackfillEvents !== void 0) {
     const missing = section.createDiv({ cls: "mind-trace-event-coverage-card" });
     const missingCopy = missing.createDiv();
-    missingCopy.createEl("strong", { text: `${legacyCount + calibrationCount} 篇记录可以进行周级校准` });
+    missingCopy.createEl("strong", { text: `${calibrationCount} 篇记录可以进行${monthly ? "按周" : "周级"}校准` });
     missingCopy.createEl("p", { text: "确认后将统一论元、关系与实体名称，人工确认内容保持不变。" });
-    const button = missing.createEl("button", { text: legacyCount > 0 ? "升级并校准本周" : "校准本周事件", attr: { type: "button" } });
+    const button = missing.createEl("button", { text: `校准${scope}事件`, attr: { type: "button" } });
     button.disabled = options.backfillBusy === true;
     button.addEventListener("click", options.onBackfillEvents);
   }
@@ -5802,16 +6108,34 @@ function renderWeeklyEventCenter(container, report, options = {}) {
     }
   }
   if (options.eventLoading && liveSource === null) {
-    section.createDiv({ cls: "mind-trace-event-inline-state", text: "正在从本周日记整理事件与元素…", attr: { role: "status" } });
+    section.createDiv({ cls: "mind-trace-event-inline-state", text: `正在从${scope}日记整理事件与元素…`, attr: { role: "status" } });
     return;
   }
   if (aggregate.records.length === 0) {
     const empty = section.createDiv({ cls: "mind-trace-event-inline-state" });
-    empty.createDiv({ cls: "mind-trace-event-empty-title", text: coverage.source > 0 && coverage.covered === coverage.source ? "本周没有提取到明确事件" : "本周事件图谱还没有足够数据" });
+    empty.createDiv({ cls: "mind-trace-event-empty-title", text: coverage.source > 0 && coverage.covered === coverage.source ? `${scope}没有提取到明确事件` : `${scope}事件图谱还没有足够数据` });
     empty.createEl("p", { text: "图谱不会把情绪或推测自动转成事件。" });
     return;
   }
-  const graphWrap = section.createDiv({ cls: "mind-trace-weekly-element-graph" });
+  let graphWrap;
+  let graphDisclosure = null;
+  if (monthly) {
+    graphDisclosure = section.createEl("details", { cls: "mind-trace-monthly-graph-disclosure" });
+    graphDisclosure.open = options.graphExpanded === true;
+    const summary = graphDisclosure.createEl("summary", { text: "展开本月互动图谱" });
+    summary.setAttribute("aria-label", "展开本月互动图谱");
+    graphDisclosure.addEventListener("toggle", () => {
+      if (graphDisclosure.open) {
+        summary.textContent = "收起本月互动图谱";
+      } else {
+        summary.textContent = "展开本月互动图谱";
+      }
+      options.onGraphToggle?.(graphDisclosure.open);
+    });
+    graphWrap = graphDisclosure.createDiv({ cls: "mind-trace-weekly-element-graph mind-trace-monthly-element-graph" });
+  } else {
+    graphWrap = section.createDiv({ cls: "mind-trace-weekly-element-graph" });
+  }
   const ledgerDetails = section.createEl("details", { cls: "mind-trace-event-ledger-disclosure mind-trace-weekly-event-ledger-disclosure" });
   ledgerDetails.open = options.ledgerOpen === true;
   ledgerDetails.addEventListener("toggle", () => options.onLedgerToggle?.(ledgerDetails.open));
@@ -5838,9 +6162,14 @@ function renderWeeklyEventCenter(container, report, options = {}) {
       });
     }
   };
+  if (monthly && graphDisclosure?.open !== true) {
+    renderLedger(aggregate.records, null, null);
+    graphStatus.textContent = `展开后显示图谱 · ${aggregate.records.length} 件 · ${coverage.covered}/${coverage.source} 篇已覆盖`;
+    return;
+  }
   const result = renderMemoryStarGraph(graphWrap, aggregate, {
-    eventLimit: options.graphEventLimit ?? 20,
-    ariaLabel: "本周事件与论元记忆星图",
+    eventLimit: graphLimit,
+    ariaLabel: `${scope}事件与论元记忆星图`,
     initialState: options.graphState,
     onStateChange: options.onGraphStateChange,
     onSelection: renderLedger
@@ -5973,6 +6302,136 @@ function renderSavedWeeklyReport(container, report, options = {}) {
     shell.createEl("p", { cls: "mind-trace-weekly-truncated", text: "本周日记较长，AI 分析使用了截取后的摘录。" });
   }
 }
+function renderSavedMonthlyReport(container, report, options = {}) {
+  container.empty();
+  container.addClass("mind-trace-view", "mind-trace-saved-monthly-report", "mind-trace-saved-weekly-report");
+  const shell = container.createDiv({
+    cls: `mind-trace-journal-shell mind-trace-saved-shell mind-trace-weekly-shell mind-trace-monthly-shell${options.animate ? " is-entering" : ""}`,
+    attr: { "aria-busy": options.busy === true ? "true" : "false" }
+  });
+  const header = shell.createEl("header", { cls: "mind-trace-saved-header mind-trace-weekly-header mind-trace-monthly-header" });
+  header.createDiv({ cls: "mind-trace-eyebrow", text: `心迹月报 · ${report.periodStatus === "partial" ? "截至今天" : "已生成"}` });
+  header.createEl("h1", { cls: "mind-trace-journal-title", text: `${report.periodStart} — ${report.periodEnd}` });
+  header.createEl("p", { text: `${report.sourceDays} 个记录日 · ${report.sourceSessions} 篇记录 · ${report.activeWeeks} 个活跃自然周 · ${weeklyGeneratedAtText(report.generatedAt)}` });
+  const actions = header.createDiv({ cls: "mind-trace-saved-header-actions" });
+  if (options.onRegenerate !== void 0) {
+    const regenerate = actions.createEl("button", { cls: "mind-trace-export-pdf mind-trace-report-regenerate", text: options.busy ? "正在生成…" : "重新生成", attr: { type: "button" } });
+    regenerate.disabled = options.busy === true;
+    regenerate.addEventListener("click", options.onRegenerate);
+  }
+  if (options.onEditSource !== void 0) {
+    const edit = actions.createEl("button", { cls: "mind-trace-edit-source", text: "编辑 Markdown", attr: { type: "button" } });
+    edit.disabled = options.busy === true;
+    edit.addEventListener("click", options.onEditSource);
+  }
+  if (options.busy === true) {
+    const status = shell.createDiv({ cls: "mind-trace-report-inline-status", attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
+    attachLlmActivityStatus(status, options.llmActivitySource, "正在根据当前日记重新整理这个月…");
+  }
+  if (typeof options.error === "string" && options.error.length > 0) {
+    shell.createDiv({ cls: "mind-trace-report-inline-error", text: options.error, attr: { role: "alert" } });
+  }
+  const fold = shell.createEl("section", { cls: "mind-trace-editor-card mind-trace-weekly-fold mind-trace-monthly-overview" });
+  const ledger = fold.createDiv({ cls: "mind-trace-weekly-ledger" });
+  ledger.createDiv({ cls: "mind-trace-section-kicker", text: report.periodStatus === "partial" ? "本月预览 · 截至今天" : "整月账页" });
+  ledger.createEl("time", { text: `${report.periodStart.slice(5).replace("-", ".")}\n—\n${report.periodEnd.slice(5).replace("-", ".")}` });
+  const ledgerStats = ledger.createDiv({ cls: "mind-trace-weekly-ledger-stats" });
+  for (const [label, value] of [["记录日", String(report.sourceDays)], ["总篇数", String(report.sourceSessions)], ["活跃周", String(report.activeWeeks)]]) {
+    const item = ledgerStats.createDiv();
+    item.createSpan({ text: label });
+    item.createEl("strong", { text: value });
+  }
+  const foldBody = fold.createDiv({ cls: "mind-trace-weekly-fold-body" });
+  foldBody.createDiv({ cls: "mind-trace-diary-kicker", text: "本月概览 · 已归档" });
+  foldBody.createDiv({ cls: "mind-trace-card-title mind-trace-diary-title", text: "这个月的正文" });
+  foldBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-weekly-summary", text: report.summary });
+  const metricsSection = shell.createEl("section", { cls: "mind-trace-rating-comparison mind-trace-weekly-metrics mind-trace-monthly-metrics" });
+  const metricsHeading = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-heading" });
+  const metricsCopy = metricsHeading.createDiv();
+  metricsCopy.createDiv({ cls: "mind-trace-section-kicker", text: `状态对照 · ${report.periodStatus === "partial" ? "上月同期" : "上月"}` });
+  metricsCopy.createDiv({ cls: "mind-trace-rating-comparison-title", text: "一个月，状态如何移动", attr: { role: "heading", "aria-level": "2" } });
+  metricsCopy.createEl("p", { text: `本月值来自日记自评平均；变化量用${report.periodStatus === "partial" ? "上月同期" : "上月"}作对照。` });
+  const metricGrid = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-grid" });
+  for (const metric of report.metrics) {
+    const card = metricGrid.createEl("section", { cls: `mind-trace-rating-comparison-card mind-trace-rating-comparison-${metric.key} mind-trace-weekly-metric-card` });
+    const cardHeading = card.createDiv({ cls: "mind-trace-rating-card-heading" });
+    cardHeading.createDiv({ cls: "mind-trace-rating-card-title", text: metric.label });
+    cardHeading.createSpan({ cls: `mind-trace-rating-difference ${weeklyMetricDeltaClass(metric)}`, text: metric.delta === "—" ? "暂无对照" : `较${report.periodStatus === "partial" ? "上月同期" : "上月"} ${metric.delta}` });
+    const value = card.createDiv({ cls: "mind-trace-weekly-metric-value" });
+    value.createEl("output", { text: metric.current });
+    value.createSpan({ text: metric.current === "—" ? "" : "/ 5" });
+  }
+  const rhythm = shell.createEl("section", { cls: "mind-trace-editor-card mind-trace-monthly-rhythm" });
+  const rhythmHeading = rhythm.createDiv({ cls: "mind-trace-card-heading" });
+  rhythmHeading.createDiv({ cls: "mind-trace-card-title", text: "月内节奏" });
+  rhythmHeading.createSpan({ text: "自然周轴" });
+  const axis = rhythm.createDiv({ cls: "mind-trace-monthly-rhythm-axis", attr: { role: "list", "aria-label": "月度节律轴" } });
+  for (const week of report.weekStats ?? []) {
+    const item = axis.createDiv({ cls: "mind-trace-monthly-rhythm-week", attr: { role: "listitem" } });
+    item.createDiv({ cls: "mind-trace-monthly-rhythm-label", text: `${week.startLabel ?? week.start?.slice(5) ?? ""}–${week.endLabel ?? week.end?.slice(5) ?? ""}` });
+    const bars = item.createDiv({ cls: "mind-trace-monthly-rhythm-bars" });
+    for (const [key, label] of [["mood", "心"], ["energy", "精"], ["stress", "压"]]) {
+      const value = week[key];
+      const bar = bars.createDiv({ cls: `mind-trace-monthly-rhythm-bar is-${key}`, attr: { title: `${label} ${value === null ? "无数据" : value.toFixed(1)}` } });
+      bar.style.setProperty("--mind-trace-rhythm-value", value === null ? "0" : String(value));
+    }
+    item.createDiv({ cls: "mind-trace-monthly-rhythm-meta", text: `${week.days} 天 · ${week.sessions} 篇` });
+  }
+  renderWeeklyEventCenter(shell, report, { ...options, reportType: "monthly", scope: "本月", eventLimit: options.monthlyGraphEventLimit ?? 100 });
+  const analysisGrid = shell.createDiv({ cls: "mind-trace-weekly-analysis-grid mind-trace-monthly-analysis-grid" });
+  for (const [title, label, items, mark] of [["发生的变化", "从这个月看见", report.changes, "变化"], ["可能的原因", "保留推测的边界", report.possibleCauses, "线索"]]) {
+    const card = analysisGrid.createEl("section", { cls: "mind-trace-editor-card mind-trace-weekly-analysis-card" });
+    const cardHeading = card.createDiv({ cls: "mind-trace-card-heading" });
+    cardHeading.createDiv({ cls: "mind-trace-card-title", text: title });
+    cardHeading.createSpan({ text: label });
+    renderWeeklyEvidenceRows(card, items, mark, options.onOpenEvidenceDate ?? null);
+  }
+  const emotion = shell.createEl("section", { cls: "mind-trace-editor-card mind-trace-weekly-emotion-card" });
+  const emotionHeading = emotion.createDiv({ cls: "mind-trace-card-heading" });
+  emotionHeading.createDiv({ cls: "mind-trace-card-title", text: "AI 对这个月的情绪假设" });
+  emotionHeading.createSpan({ text: "双重读法" });
+  emotion.createEl("p", { cls: "mind-trace-weekly-emotion-note", text: "这是根据文字线索的假设性解读，不是心理或医学诊断。" });
+  const emotionGrid = emotion.createDiv({ cls: "mind-trace-weekly-emotion-grid" });
+  const primary = emotionGrid.createDiv({ cls: "mind-trace-weekly-emotion-primary" });
+  primary.createSpan({ text: "主要假设" });
+  primary.createDiv({ cls: "mind-trace-saved-copy", text: report.emotion.hypothesis });
+  const alternative = emotionGrid.createDiv({ cls: "mind-trace-weekly-emotion-alternative" });
+  alternative.createSpan({ text: "另一种可能" });
+  alternative.createDiv({ cls: "mind-trace-saved-copy", text: report.emotion.alternative });
+  const clues = emotion.createDiv({ cls: "mind-trace-weekly-clues" });
+  clues.createSpan({ text: "文字线索" });
+  const clueList = clues.createEl("ul");
+  for (const clue of report.emotion.clues) clueList.createEl("li", { text: clue });
+  const themesSection = shell.createEl("section", { cls: "mind-trace-facets-section mind-trace-weekly-themes" });
+  const themesHeading = themesSection.createDiv({ cls: "mind-trace-card-heading" });
+  themesHeading.createDiv({ cls: "mind-trace-card-title", text: "反复出现的主题" });
+  themesHeading.createSpan({ text: "月内切片" });
+  const themesGrid = themesSection.createDiv({ cls: "mind-trace-facets-grid" });
+  for (const theme of report.themes) {
+    const card = themesGrid.createDiv({ cls: "mind-trace-facet-card" });
+    const themeHeader = card.createDiv({ cls: "mind-trace-facet-header" });
+    themeHeader.createSpan({ cls: "mind-trace-facet-kind", text: "月内主题" });
+    card.createDiv({ cls: "mind-trace-facet-category", text: theme.name });
+    card.createDiv({ cls: "mind-trace-facet-divider", attr: { "aria-hidden": "true" } });
+    card.createDiv({ cls: "mind-trace-saved-copy mind-trace-facet-summary", text: theme.observation });
+  }
+  const closing = shell.createDiv({ cls: "mind-trace-reflection-grid mind-trace-weekly-closing" });
+  const actionSection = closing.createEl("section", { cls: "mind-trace-editor-card mind-trace-action-card" });
+  const actionHeading = actionSection.createDiv({ cls: "mind-trace-card-heading" });
+  actionHeading.createDiv({ cls: "mind-trace-card-title", text: "下月最小的一步" });
+  actionHeading.createSpan({ text: "只做这一小步" });
+  const actionBody = actionSection.createDiv({ cls: "mind-trace-action-body" });
+  actionBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-weekly-action", text: report.nextStep.action });
+  actionBody.createEl("p", { cls: "mind-trace-weekly-action-reason", text: report.nextStep.reason });
+  const questionSection = closing.createEl("section", { cls: "mind-trace-editor-card mind-trace-question-card" });
+  const questionHeading = questionSection.createDiv({ cls: "mind-trace-card-heading" });
+  questionHeading.createDiv({ cls: "mind-trace-card-title", text: "留给自己的问题" });
+  questionHeading.createSpan({ text: "不急着回答" });
+  const questionBody = questionSection.createDiv({ cls: "mind-trace-question-body" });
+  questionBody.createSpan({ cls: "mind-trace-question-mark", text: "？", attr: { "aria-hidden": "true" } });
+  questionBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-compact-editor", text: report.selfQuestion });
+  if (report.truncated) shell.createEl("p", { cls: "mind-trace-weekly-truncated", text: "本月日记较长，AI 分析使用了截取后的摘录。" });
+}
 var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -5991,6 +6450,7 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
   currentReport = null;
   graphState = { activeEvent: null, activeEntity: null, scale: 1, x: 0, y: 0 };
   ledgerOpen = false;
+  graphExpanded = false;
   eventCenterEl = null;
   getViewType() {
     return WEEKLY_REPORT_VIEW_TYPE;
@@ -6028,18 +6488,19 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
     }
     const rendered = this.contentEl.createDiv({ cls: "mind-trace-saved-render" });
     try {
-      const frontmatter = parseFrontmatter(this.data, "心迹周报");
-      const report = parseSavedWeeklyReport(this.data, frontmatter);
+      const frontmatter = parseFrontmatter(this.data, "心迹报告");
+      const report = parseSavedReport(this.data, frontmatter);
       this.currentReport = report;
-      const periodKey = `${report.periodStart}--${report.periodEnd}`;
+      const periodKey = `${report.reportType ?? "weekly"}--${report.periodStart}--${report.periodEnd}`;
       if (this.eventSourceKey !== periodKey) {
         this.eventSourceKey = periodKey;
         this.eventSource = null;
         this.eventError = "";
         this.graphState = { activeEvent: null, activeEntity: null, scale: 1, x: 0, y: 0 };
         this.ledgerOpen = false;
+        this.graphExpanded = false;
       }
-      renderSavedWeeklyReport(rendered, report, {
+      const renderOptions = {
         animate: !this.hasRendered,
         busy: this.busy,
         error: this.inlineError,
@@ -6056,8 +6517,13 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         },
         onBackfillEvents: () => {
           void this.beginEventBackfill(report);
-        },
-      });
+        }
+      };
+      if (report.reportType === "monthly") {
+        renderSavedMonthlyReport(rendered, report, renderOptions);
+      } else {
+        renderSavedWeeklyReport(rendered, report, renderOptions);
+      }
       this.hasRendered = true;
       if (!this.eventLoading && this.eventSource === null && this.eventError.length === 0) {
         void this.loadEventSource(report);
@@ -6070,17 +6536,23 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
     }
   }
   eventRenderOptions(report, existingSection = null) {
+    const monthly = report.reportType === "monthly";
     return {
       eventSource: this.eventSource,
       eventLoading: this.eventLoading,
       eventError: this.eventError,
-      graphEventLimit: this.plugin.settings.weeklyGraphEventLimit,
+      graphEventLimit: monthly ? this.plugin.settings.monthlyGraphEventLimit : this.plugin.settings.weeklyGraphEventLimit,
       weeklyEventLimit: this.plugin.settings.weeklyEventLimit,
+      eventLimit: monthly ? this.plugin.settings.monthlyGraphEventLimit : this.plugin.settings.weeklyEventLimit,
+      monthlyGraphEventLimit: this.plugin.settings.monthlyGraphEventLimit,
+      reportType: monthly ? "monthly" : "weekly",
+      scope: monthly ? "本月" : "本周",
       llmActivitySource: this.plugin,
       backfillBusy: this.backfillBusy,
       backfillMessage: this.backfillMessage,
       graphState: this.graphState,
       ledgerOpen: this.ledgerOpen,
+      graphExpanded: this.graphExpanded,
       existingSection,
       onEventCenter: (section) => {
         this.eventCenterEl = section;
@@ -6090,6 +6562,12 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       },
       onLedgerToggle: (open) => {
         this.ledgerOpen = open;
+      },
+      onGraphToggle: (open) => {
+        this.graphExpanded = open;
+        if (open && report.reportType === "monthly") {
+          window.requestAnimationFrame(() => this.refreshEventCenter(report));
+        }
       },
       onOpenEvent: (record) => {
         void this.plugin.openJournalSession(record.filePath, record.sessionIndex);
@@ -6120,7 +6598,9 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
     this.eventError = "";
     this.refreshEventCenter(report);
     try {
-      const source = await this.plugin.weeklyReportRepository.collect({ type: "weekly", start: report.periodStart, end: report.periodEnd });
+      const period = { type: report.reportType === "monthly" ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
+      const repository = report.reportType === "monthly" ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository;
+      const source = await repository.collect(period);
       if (token === this.eventLoadToken) {
         this.eventSource = source;
       }
@@ -6153,25 +6633,28 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
     this.backfillMessage = "";
   }
   async beginEventBackfill(report) {
-    const candidates = [...(this.eventSource?.eventCalibrationSessions ?? []), ...(this.eventSource?.eventLegacySessions ?? [])];
+    const candidates = this.eventSource?.eventCalibrationSessions ?? [];
     if (candidates.length === 0 || this.backfillBusy || this.eventSource === null) {
       return;
     }
     const providerLabel = PROVIDER_LABELS[this.plugin.settings.activeProvider] ?? this.plugin.settings.activeProvider;
-    const hasLegacy = (this.eventSource?.eventLegacySessions.length ?? 0) > 0;
+    const monthly = report.reportType === "monthly";
+    const scope = monthly ? "本月" : "本周";
     openMindTraceOperation(this.app, this.plugin, {
-      eyebrow: "心迹周报 · 图谱整理",
-      title: hasLegacy ? "升级并校准本周图谱事件？" : "校准本周图谱事件？",
+      eyebrow: `心迹${monthly ? "月报" : "周报"} · 图谱整理`,
+      title: `校准${scope}图谱事件？`,
       description: `将把 ${candidates.length} 篇记录的日记正文、切片和已有事件发送给 ${providerLabel}，统一事件、实体与关系；不会发送原始问答。`,
-      confirmLabel: hasLegacy ? "升级并整理" : "开始整理",
-      stages: ["收集本周事件", "校准图谱事件", "逐篇写回日记", "重新读取事件", "生成并更新图谱"],
+      confirmLabel: "开始整理",
+      stages: [`收集${scope}事件`, "校准图谱事件", "逐篇写回日记", "重新读取事件", "生成并更新图谱"],
       run: async (update) => {
         this.backfillBusy = true;
-        this.backfillMessage = `正在后台用整周上下文整理 ${candidates.length} 篇记录。`;
+        this.backfillMessage = `正在后台用${monthly ? "自然周片段" : "整周上下文"}整理 ${candidates.length} 篇记录。`;
         this.refreshEventCenter(report);
-        update({ stage: 1, total: 5, title: "收集本周事件", detail: "正在读取最新日记，避免覆盖任务期间发生的修改。" });
-        const latestSource = await this.plugin.weeklyReportRepository.collect({ type: "weekly", start: report.periodStart, end: report.periodEnd });
-        const calibrated = await this.plugin.calibrateWeeklyEvents(latestSource, true, update);
+        update({ stage: 1, total: 5, title: `收集${scope}事件`, detail: "正在读取最新日记，避免覆盖任务期间发生的修改。" });
+        const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
+        const repository = monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository;
+        const latestSource = await repository.collect(period);
+        const calibrated = monthly ? await this.plugin.calibrateMonthlyEvents(latestSource, update) : await this.plugin.calibrateWeeklyEvents(latestSource, update);
         update({ stage: 5, total: 5, title: "生成并更新图谱", detail: "正在构建新的图谱布局并恢复当前浏览位置。" });
         this.eventSource = calibrated;
         this.eventError = "";
@@ -6187,33 +6670,35 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         this.backfillBusy = false;
         this.backfillMessage = "";
         try {
-          this.eventSource = await this.plugin.weeklyReportRepository.collect({ type: "weekly", start: report.periodStart, end: report.periodEnd });
+          const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
+          this.eventSource = await (monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository).collect(period);
           this.eventError = "";
         } catch (error) {
           this.eventError = errorMessage(error);
         }
         this.refreshEventCenter(report);
       },
-      successTitle: "本周图谱已经整理完成",
+      successTitle: `${scope}图谱已经整理完成`,
       successDetail: `已校准 ${candidates.length} 篇记录，并根据写回后的事件重新生成图谱。`,
       successLabel: "查看图谱",
-      backgroundSuccess: "本周图谱整理完成"
+      backgroundSuccess: `${scope}图谱整理完成`
     });
   }
   beginReportRegeneration(report) {
-    const period = { type: "weekly", start: report.periodStart, end: report.periodEnd };
+    const monthly = report.reportType === "monthly";
+    const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
     openMindTraceOperation(this.app, this.plugin, {
-      eyebrow: "心迹周报 · 长任务",
-      title: "重新整理这份周报？",
-      description: "将重新整理本周图谱事件、写回未人工确认的日记事件，并替换现有周报 Markdown。",
+      eyebrow: `心迹${monthly ? "月报" : "周报"} · 长任务`,
+      title: `重新整理这份${monthly ? "月报" : "周报"}？`,
+      description: `将重新整理${monthly ? "本月" : "本周"}图谱事件、写回未人工确认的日记事件，并替换现有${monthly ? "月报" : "周报"} Markdown。`,
       confirmLabel: "重新整理",
       warning: true,
-      stages: ["读取本周记录", "整理图谱事件", "模型校准事件", "逐篇写回日记", "生成周报内容", "保存周报", "构建图谱数据", "更新周报与图谱"],
+      stages: [`读取${monthly ? "本月" : "本周"}记录`, "整理图谱事件", "模型校准事件", "逐篇写回日记", `生成${monthly ? "月报" : "周报"}内容`, `保存${monthly ? "月报" : "周报"}`, "构建图谱数据", `更新${monthly ? "月报" : "周报"}与图谱`],
       run: async (update) => {
         this.busy = true;
         this.render(true);
-        const result = await this.plugin.generateWeeklyReport(period, true, false, update);
-        update({ stage: 8, total: 8, title: "更新周报与图谱", detail: "正在载入新周报并恢复当前浏览位置。" });
+        const result = monthly ? await this.plugin.generateMonthlyReport(period, true, false, update) : await this.plugin.generateWeeklyReport(period, true, false, update);
+        update({ stage: 8, total: 8, title: `更新${monthly ? "月报" : "周报"}与图谱`, detail: `正在载入新${monthly ? "月报" : "周报"}并恢复当前浏览位置。` });
         this.data = await this.app.vault.cachedRead(result.file);
         this.eventSource = result.source;
         return result;
@@ -6227,17 +6712,17 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       onError: async () => {
         this.busy = false;
         try {
-          this.eventSource = await this.plugin.weeklyReportRepository.collect(period);
+          this.eventSource = await (monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository).collect(period);
           this.eventError = "";
         } catch (error) {
           this.eventError = errorMessage(error);
         }
         this.render(true);
       },
-      successTitle: "周报和图谱已经重新整理",
-      successDetail: "事件已按整周上下文校准，周报与图谱均已更新。",
-      successLabel: "查看新周报",
-      backgroundSuccess: "周报和图谱重新整理完成"
+      successTitle: `${monthly ? "月报" : "周报"}和图谱已经重新整理`,
+      successDetail: `事件已按${monthly ? "自然周片段" : "整周"}上下文校准，${monthly ? "月报" : "周报"}与图谱均已更新。`,
+      successLabel: `查看新${monthly ? "月报" : "周报"}`,
+      backgroundSuccess: `${monthly ? "月报" : "周报"}和图谱重新整理完成`
     });
   }
   renderError(container, message) {
@@ -6429,6 +6914,31 @@ function collectWeeklyReportFiles(app) {
   files.sort((left, right) => right.start.localeCompare(left.start) || right.end.localeCompare(left.end));
   return files;
 }
+function collectMonthlyReportFiles(app) {
+  const files = [];
+  for (const file of app.vault.getMarkdownFiles()) {
+    const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (frontmatter?.["mind-trace-report"] !== true || frontmatter?.["report-type"] !== "monthly") {
+      continue;
+    }
+    const start = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
+    if (start.length === 0) {
+      continue;
+    }
+    files.push({
+      file,
+      start,
+      end: typeof frontmatter["period-end"] === "string" ? frontmatter["period-end"] : "",
+      status: frontmatter["period-status"] === "partial" ? "partial" : "complete",
+      generatedAt: typeof frontmatter["generated-at"] === "string" ? frontmatter["generated-at"] : "",
+      days: Number(frontmatter["source-days"]) || 0,
+      sessions: Number(frontmatter["source-sessions"]) || 0,
+      activeWeeks: Number(frontmatter["source-active-weeks"]) || 0
+    });
+  }
+  files.sort((left, right) => right.start.localeCompare(left.start) || right.end.localeCompare(left.end));
+  return files;
+}
 var JournalView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -6444,6 +6954,11 @@ var JournalView = class extends import_obsidian4.ItemView {
   weeklyReportLoading = false;
   weeklyReportProgress = null;
   weeklyReportCardEl = null;
+  monthlyReportState = null;
+  monthlyReportLoading = false;
+  monthlyReportProgress = null;
+  monthlyReportCardEl = null;
+  reportTab = "weekly";
   renderToken = 0;
   homeDashboard = null;
   historySnapshot = null;
@@ -6481,7 +6996,10 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (!this.weeklyReportLoading) {
         this.weeklyReportState = null;
       }
-      if (!this.busy && !this.weeklyReportLoading && (this.mode === "home" || this.mode === "reports" || this.mode === "trajectory")) {
+      if (!this.monthlyReportLoading) {
+        this.monthlyReportState = null;
+      }
+      if (!this.busy && !this.weeklyReportLoading && !this.monthlyReportLoading && (this.mode === "home" || this.mode === "reports" || this.mode === "trajectory")) {
         if (this.metricsRenderTimer !== null) {
           window.clearTimeout(this.metricsRenderTimer);
         }
@@ -6779,6 +7297,9 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (this.mode === "reports" && this.leaf.view === this) {
         this.render(true);
       }
+      if (this.weeklyReportState?.kind !== "loading") {
+        void this.loadMonthlyReportCard();
+      }
     }
   }
   retryWeeklyReport(overwrite = false, automatic = false) {
@@ -6817,11 +7338,13 @@ var JournalView = class extends import_obsidian4.ItemView {
         if (this.mode === "reports" && this.leaf.view === this) {
           this.render(true);
         }
+        void this.loadMonthlyReportCard();
       },
       onError: (error) => {
         this.weeklyReportLoading = false;
         this.weeklyReportState = { kind: "error", key, period, message: errorMessage(error) };
         this.refreshWeeklyReportCard();
+        void this.loadMonthlyReportCard();
       },
       successTitle: "周报和图谱已经生成",
       successDetail: "事件已按整周上下文整理，周报与图谱均已保存。",
@@ -6830,6 +7353,123 @@ var JournalView = class extends import_obsidian4.ItemView {
       onViewResult: () => {
         if (this.mode !== "reports") {
           this.setMode("reports");
+        }
+      }
+    });
+  }
+  async loadMonthlyReportCard() {
+    if (this.monthlyReportLoading || (this.mode !== "home" && this.mode !== "reports")) {
+      return;
+    }
+    if (this.weeklyReportLoading || this.weeklyReportState === null) {
+      void this.loadWeeklyReportCard();
+      return;
+    }
+    const period = completedPeriod("monthly");
+    const key = `${period.start}--${period.end}--${period.status}`;
+    if (this.monthlyReportState !== null && this.monthlyReportState.key === key && this.monthlyReportState.kind !== "loading") {
+      return;
+    }
+    this.monthlyReportLoading = true;
+    this.monthlyReportState = { kind: "loading", key, period };
+    try {
+      const status = await this.plugin.monthlyReportStatus(period);
+      if (status.kind === "missing" && this.plugin.settings.monthlyReportAutoGenerate !== false && !this.plugin.monthlyReportAttempts.has(key)) {
+        this.monthlyReportLoading = false;
+        this.retryMonthlyReport(false, true);
+        return;
+      }
+      this.monthlyReportState = { ...status, key };
+    } catch (error) {
+      this.monthlyReportState = { kind: "error", key, period, message: errorMessage(error) };
+    } finally {
+      this.monthlyReportLoading = false;
+      this.monthlyReportProgress = null;
+      if ((this.mode === "home" || this.mode === "reports") && this.leaf.view === this) {
+        this.refreshMonthlyReportCard();
+      }
+      if (this.mode === "reports" && this.leaf.view === this && this.reportTab === "monthly") {
+        this.render(true);
+      }
+    }
+  }
+  retryMonthlyReport(overwrite = false, automatic = false) {
+    if (this.monthlyReportLoading) {
+      return;
+    }
+    const period = completedPeriod("monthly");
+    const key = `${period.start}--${period.end}--${period.status}`;
+    openMindTraceOperation(this.app, this.plugin, {
+      eyebrow: "心迹 · 上月回顾",
+      title: overwrite ? "更新上一月的月报？" : "生成上一月的月报？",
+      description: "按自然周分段整理整月记录，校准事件后生成月报；已有文件不会被自动覆盖。",
+      confirm: overwrite,
+      confirmLabel: overwrite ? "更新月报" : "开始生成",
+      warning: overwrite,
+      stages: ["读取本月记录", "整理月度事件", "按周校准事件", "逐段写回日记", "生成月报内容", "保存月报", "构建月度图谱", "更新月报页面"],
+      run: async (update) => {
+        this.monthlyReportLoading = true;
+        this.monthlyReportState = { kind: "loading", key, period };
+        const reportProgress = (progress) => {
+          this.monthlyReportProgress = progress;
+          update(progress);
+          this.refreshMonthlyReportCard();
+        };
+        this.refreshMonthlyReportCard();
+        const status = await this.plugin.generateMonthlyReport(period, overwrite, automatic, reportProgress);
+        reportProgress({ stage: 8, total: 8, title: "更新月报页面", detail: "正在更新月报入口和图谱。" });
+        this.monthlyReportState = { ...status, key };
+        return status;
+      },
+      onSuccess: async () => {
+        this.monthlyReportLoading = false;
+        this.monthlyReportProgress = null;
+        this.refreshMonthlyReportCard();
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+        if (this.mode === "reports" && this.leaf.view === this) {
+          this.render(true);
+        }
+      },
+      onError: (error) => {
+        this.monthlyReportLoading = false;
+        this.monthlyReportState = { kind: "error", key, period, message: errorMessage(error) };
+        this.refreshMonthlyReportCard();
+      },
+      successTitle: "月报和图谱已经生成",
+      successDetail: "事件已按自然周片段整理，月报与图谱均已保存。",
+      successLabel: "查看月报",
+      backgroundSuccess: "上一月的月报和图谱已经生成",
+      onViewResult: () => {
+        this.reportTab = "monthly";
+        if (this.mode !== "reports") {
+          this.setMode("reports");
+        }
+      }
+    });
+  }
+  generateCurrentMonthReport(existingPreview = null) {
+    const period = currentMonthPeriod();
+    const currentFile = existingPreview ?? this.plugin.monthlyReportRepository.find(this.plugin.settings, period);
+    const hasExisting = currentFile !== null;
+    openMindTraceOperation(this.app, this.plugin, {
+      eyebrow: "心迹 · 本月预览",
+      title: hasExisting ? "更新本月预览？" : "生成本月预览？",
+      description: hasExisting ? "将用当前自然月截至今天的最新记录替换现有预览 Markdown；至少有 1 个记录日即可。" : "将当前自然月截至今天的记录生成一份月报预览；至少有 1 个记录日即可。",
+      confirm: hasExisting,
+      confirmLabel: hasExisting ? "更新预览" : "开始生成",
+      warning: hasExisting,
+      stages: ["读取本月记录", "整理月度事件", "按周校准事件", "逐段写回日记", "生成月报内容", "保存月报", "构建月度图谱", "更新月报页面"],
+      run: async (update) => await this.plugin.generateMonthlyReport(period, true, false, update),
+      successTitle: "本月预览已生成",
+      successDetail: "月报标记为截至今天，月底后可再生成完整月报。",
+      successLabel: "查看月报",
+      backgroundSuccess: "本月预览已经生成",
+      onViewResult: async () => {
+        const status = await this.plugin.monthlyReportStatus(period);
+        if ((status.kind === "ready" || status.kind === "stale") && status.file !== null) {
+          await this.plugin.openWeeklyReportFile(status.file.path);
+        } else {
+          showMindTraceNotice("本月预览暂时无法打开");
         }
       }
     });
@@ -6943,11 +7583,13 @@ var JournalView = class extends import_obsidian4.ItemView {
       }
     );
     if (result.entries.length === 0) {
-      const topGrid = shell.createDiv({ cls: "mind-trace-home-grid" });
+      const topGrid = shell.createDiv({ cls: "mind-trace-home-grid mind-trace-home-report-grid" });
       const calendarCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
       const weeklyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
+      const monthlyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
       dashboard.renderCalendar(result.entries, calendarCell);
       this.renderWeeklyReportCard(weeklyCell);
+      this.renderMonthlyReportCard(monthlyCell);
       const emptySection = shell.createDiv({ cls: "mind-trace-home-section" });
       dashboard.renderEmpty(emptySection);
       this.homeDashboard = dashboard;
@@ -6961,10 +7603,12 @@ var JournalView = class extends import_obsidian4.ItemView {
     const previousEnd = localDateString(addLocalDays(currentStart, -1));
     const previousStart = localDateString(addLocalDays(currentStart, -this.plugin.settings.dashboardRange));
     const previousFiltered = allEntries.filter((entry) => entry.date >= previousStart && entry.date <= previousEnd);
-    const topGrid = shell.createDiv({ cls: "mind-trace-home-grid" });
+    const topGrid = shell.createDiv({ cls: "mind-trace-home-grid mind-trace-home-report-grid" });
     const calendarCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
     const weeklyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
+    const monthlyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
     this.renderWeeklyReportCard(weeklyCell);
+    this.renderMonthlyReportCard(monthlyCell);
     dashboard.renderCalendar(result.entries, calendarCell);
     const trendSection = shell.createDiv({ cls: "mind-trace-home-section mind-trace-home-panel" });
     dashboard.renderTrend(trendSection, filtered, this.plugin.settings.dashboardRange, previousFiltered);
@@ -7057,9 +7701,72 @@ var JournalView = class extends import_obsidian4.ItemView {
     }
     this.renderWeeklyReportCard(this.weeklyReportCardEl.parentElement, this.weeklyReportCardEl);
   }
+  renderMonthlyReportCard(container, existing = null) {
+    const state = this.monthlyReportState;
+    const period = state?.period ?? completedPeriod("monthly");
+    const card = existing ?? container.createEl("section", { cls: "mind-trace-weekly-card mind-trace-monthly-card" });
+    card.empty();
+    this.monthlyReportCardEl = card;
+    const header = card.createDiv({ cls: "mind-trace-lead-card-header" });
+    const title = header.createDiv();
+    title.createDiv({ cls: "mind-trace-home-section-title", text: "上一月回顾", attr: { role: "heading", "aria-level": "2" } });
+    title.createSpan({ cls: "mind-trace-period-label", text: periodLabel(period) });
+    const body = card.createDiv({ cls: "mind-trace-weekly-card-body", attr: { "aria-live": "polite", "aria-busy": this.monthlyReportLoading ? "true" : "false" } });
+    const actions = card.createDiv({ cls: "mind-trace-weekly-card-actions" });
+    const action = (label, handler, primary = false) => {
+      const button = actions.createEl("button", { cls: primary ? "mod-cta" : "", text: label, attr: { type: "button" } });
+      button.addEventListener("click", handler);
+      return button;
+    };
+    if (state === null || state.kind === "loading") {
+      const status = body.createDiv({ cls: "mind-trace-report-status mind-trace-llm-inline-status", attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
+      if (this.monthlyReportProgress !== null) {
+        status.createSpan({ cls: "mind-trace-llm-status-primary", text: `${this.monthlyReportProgress.stage}/${this.monthlyReportProgress.total} · ${this.monthlyReportProgress.title}` });
+        status.createSpan({ cls: "mind-trace-llm-status-detail", text: this.monthlyReportProgress.detail });
+      } else {
+        attachLlmActivityStatus(status, this.plugin, "正在检查上一月的记录与月报…");
+      }
+      return;
+    }
+    if (state.kind === "ready" || state.kind === "stale") {
+      if (state.kind === "stale") header.createSpan({ cls: "mind-trace-report-badge", text: "日记有更新" });
+      body.createEl("p", { text: state.summary });
+      action("打开完整月报", () => void this.openWeeklyReportFile(state.file.path), true);
+      if (state.kind === "stale") action("更新月报", () => this.retryMonthlyReport(true));
+      return;
+    }
+    if (state.kind === "insufficient") {
+      body.createDiv({ cls: "mind-trace-report-status-title", text: "这个月的线索还不够" });
+      body.createEl("p", { text: `已有 ${state.source.stats.activeWeeks} 个活跃自然周，达到 ${state.minimum} 周后才会调用模型。` });
+      return;
+    }
+    if (state.kind === "unconfigured") {
+      body.createDiv({ cls: "mind-trace-report-status-title", text: "配置模型后即可生成月报" });
+      body.createEl("p", { text: "月报沿用当前日记模型与表达偏好。" });
+      action("打开设置", () => this.plugin.openSettings(), true);
+      return;
+    }
+    if (state.kind === "missing") {
+      body.createDiv({ cls: "mind-trace-report-status-title", text: "上一月可以开始回顾了" });
+      body.createEl("p", { text: this.plugin.settings.monthlyReportAutoGenerate === false ? "自动生成已关闭；点击后才会向当前模型发送月内日记摘要。" : "本次会话已经尝试过自动生成；你可以在这里手动重试。" });
+      action("生成月报", () => this.retryMonthlyReport(false), true);
+      return;
+    }
+    body.createDiv({ cls: "mind-trace-report-status-title", text: "月报暂时没有生成" });
+    body.createEl("p", { text: state.message });
+    action("重试生成", () => this.retryMonthlyReport(false), true);
+    action("打开设置", () => this.plugin.openSettings());
+  }
+  refreshMonthlyReportCard() {
+    if ((this.mode !== "home" && this.mode !== "reports") || this.monthlyReportCardEl === null || !this.monthlyReportCardEl.isConnected) {
+      return;
+    }
+    this.renderMonthlyReportCard(this.monthlyReportCardEl.parentElement, this.monthlyReportCardEl);
+  }
   renderReportStatsCard(container) {
     const allEntries = collectMetrics(this.app).entries;
-    const reportFiles = collectWeeklyReportFiles(this.app);
+    const weeklyFiles = collectWeeklyReportFiles(this.app);
+    const monthlyFiles = collectMonthlyReportFiles(this.app);
     const days = new Set(allEntries.map((entry) => entry.date)).size;
     const sessions = allEntries.reduce((sum, entry) => sum + entry.sessions, 0);
     const streaks = calculateStreaks(allEntries);
@@ -7067,7 +7774,8 @@ var JournalView = class extends import_obsidian4.ItemView {
     const header = card.createDiv({ cls: "mind-trace-lead-card-header" });
     header.createDiv({ cls: "mind-trace-home-section-title", text: "报告统计", attr: { role: "heading", "aria-level": "2" } });
     const rows = [
-      ["周报数量", reportFiles.length],
+      ["周报数量", weeklyFiles.length],
+      ["月报数量", monthlyFiles.length],
       ["累计记录日", days],
       ["累计记录篇数", sessions],
       ["当前连续记录", streaks.current],
@@ -7636,7 +8344,19 @@ var JournalView = class extends import_obsidian4.ItemView {
       text: "把一段时间收拢成一张图景",
       attr: { role: "heading", "aria-level": "1" }
     });
-    heading.createEl("p", { text: "支持自然周报告，自动整合本地日记与事件图谱。" });
+    heading.createEl("p", { text: "周报保留短周期脉络，月报把自然周节奏、事件与变化放在同一张图上。" });
+    const reportTabs = shell.createDiv({ cls: "mind-trace-report-tabs", attr: { role: "tablist", "aria-label": "报告周期" } });
+    for (const [id, label] of [["weekly", "周报"], ["monthly", "月报"]]) {
+      const tab = reportTabs.createEl("button", { cls: `mind-trace-report-tab${this.reportTab === id ? " is-active" : ""}`, text: label, attr: { type: "button", role: "tab", "aria-selected": String(this.reportTab === id) } });
+      tab.addEventListener("click", () => {
+        this.reportTab = id;
+        this.render(true);
+      });
+    }
+    if (this.reportTab === "monthly") {
+      this.renderMonthlyReports(shell);
+      return;
+    }
     const current = currentWeekPeriod();
     const currentWeek = shell.createDiv({ cls: "mind-trace-current-week-report" });
     const currentCopy = currentWeek.createDiv();
@@ -7716,7 +8436,54 @@ var JournalView = class extends import_obsidian4.ItemView {
     }
     void this.loadReportListSummaries(list, files);
   }
-  async loadReportListSummaries(list, files) {
+  renderMonthlyReports(shell) {
+    const current = currentMonthPeriod();
+    const currentMonth = shell.createDiv({ cls: "mind-trace-current-week-report mind-trace-current-month-report" });
+    const currentCopy = currentMonth.createDiv();
+    currentCopy.createDiv({ cls: "mind-trace-home-section-title", text: "本月预览", attr: { role: "heading", "aria-level": "2" } });
+    currentCopy.createEl("p", { text: `${current.start.slice(5).replace("-", "/")} — ${current.end.slice(5).replace("-", "/")} · 截至今天，有至少 1 个记录日即可生成。` });
+    const currentPreviewFile = this.plugin.monthlyReportRepository.find(this.plugin.settings, current);
+    const currentButton = currentMonth.createEl("button", { cls: "mod-cta", text: currentPreviewFile === null ? "生成本月预览" : "更新本月预览", attr: { type: "button" } });
+    currentButton.addEventListener("click", () => this.generateCurrentMonthReport(currentPreviewFile));
+    const lead = shell.createDiv({ cls: "mind-trace-home-lead-grid" });
+    this.renderMonthlyReportCard(lead);
+    this.renderReportStatsCard(lead);
+    void this.loadMonthlyReportCard();
+    const section = shell.createEl("section", { cls: "mind-trace-reports-list-section" });
+    section.createDiv({ cls: "mind-trace-home-section-title", text: "全部月报", attr: { role: "heading", "aria-level": "2" } });
+    const files = collectMonthlyReportFiles(this.app);
+    if (files.length === 0) {
+      const empty = section.createDiv({ cls: "mind-trace-empty-state" });
+      empty.createDiv({ cls: "mind-trace-empty-mark", text: "等待" });
+      empty.createDiv({ cls: "mind-trace-empty-title", text: "还没有月报" });
+      empty.createEl("p", { text: "达到最低活跃周后，心迹会为最近一个完整自然月生成月报；本月预览不受正式门槛限制。" });
+      return;
+    }
+    const list = section.createDiv({ cls: "mind-trace-home-rows" });
+    for (const item of files) {
+      const row = list.createDiv({ cls: "mind-trace-home-row", attr: { role: "button", tabindex: "0", "data-report-path": item.file.path, "aria-label": `打开 ${item.start} 至 ${item.end} 的月报`, title: item.generatedAt.length > 0 ? `${item.start} 至 ${item.end} · ${weeklyGeneratedAtText(item.generatedAt)}` : `${item.start} 至 ${item.end}` } });
+      const rail = row.createDiv({ cls: "mind-trace-home-rail", attr: { "aria-hidden": "true" } });
+      rail.createSpan({ cls: "mind-trace-home-dot mind-trace-report-dot mind-trace-monthly-report-dot" });
+      const main = row.createDiv({ cls: "mind-trace-home-row-main" });
+      const period = main.createSpan({ cls: "mind-trace-home-date" });
+      period.createSpan({ cls: "mind-trace-home-date-day", text: `${item.start.slice(0, 7)}` });
+      period.createSpan({ cls: "mind-trace-home-date-week", text: item.status === "partial" ? "预览" : "月报" });
+      if (item.status === "partial") main.createSpan({ cls: "mind-trace-report-badge", text: "截至今天" });
+      main.createSpan({ cls: "mind-trace-report-row-summary mind-trace-report-list-summary", text: "正在读取摘要…" });
+      main.createSpan({ cls: "mind-trace-home-sessions", text: `${item.days} 天 · ${item.sessions} 篇 · ${item.activeWeeks} 周` });
+      main.createSpan({ cls: "mind-trace-home-row-arrow", text: "→", attr: { "aria-hidden": "true" } });
+      const open = () => void this.openWeeklyReportFile(item.file.path);
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      });
+    }
+    void this.loadReportListSummaries(list, files, "本月概览");
+  }
+  async loadReportListSummaries(list, files, heading = "一周概览") {
     for (const item of files) {
       const row = [...list.querySelectorAll(".mind-trace-home-row")].find((candidate) => candidate.getAttribute("data-report-path") === item.file.path);
       const summary = row?.querySelector(".mind-trace-report-list-summary");
@@ -7725,7 +8492,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       }
       try {
         const content = await this.app.vault.cachedRead(item.file);
-        summary.textContent = reportSummaryFromMarkdown(content);
+        summary.textContent = reportSummaryFromMarkdown(content, heading);
       } catch {
         summary.textContent = "摘要暂时无法读取。";
       }
@@ -9255,7 +10022,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     );
     const analysisSection = this.createSection(
       "回顾与分析",
-      "在完整自然周结束后生成结构化回顾；只有进入已解锁的心迹首页时才会请求模型。"
+      "按自然周与自然月生成结构化回顾；只有进入已解锁的心迹首页或报告页时才会请求模型。"
     );
     new import_obsidian5.Setting(analysisSection).setName("自动补齐上周周报").setDesc(
       "每个应用会话对最近一个完整周最多自动尝试一次；生成前会联合校准未人工确认的事件并写回日记。"
@@ -9314,6 +10081,45 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     });
     new import_obsidian5.Setting(analysisSection).setName("周报保存位置").setDesc(
       `${this.plugin.settings.journalFolder}/报告/周报（跟随日记目录）`
+    );
+    new import_obsidian5.Setting(analysisSection).setName("自动补齐上月月报").setDesc(
+      "每个应用会话对最近一个完整月最多自动尝试一次；只创建缺失月报，不覆盖预览、过期或手工编辑文件。"
+    ).addToggle((toggle) => toggle.setValue(this.plugin.settings.monthlyReportAutoGenerate !== false).onChange(async (value) => {
+      this.plugin.settings.monthlyReportAutoGenerate = value;
+      await this.plugin.saveSettings();
+      this.plugin.refreshJournalViews();
+    }));
+    const minimumWeeks = Math.min(5, Math.max(1, Number(this.plugin.settings.monthlyReportMinimumWeeks) || 4));
+    this.plugin.settings.monthlyReportMinimumWeeks = minimumWeeks;
+    const minimumMonthSetting = new import_obsidian5.Setting(analysisSection).setName("月报最低活跃周").setDesc(
+      `当前为 ${minimumWeeks} 周；完整月需要不同周一至周日区间各有至少一天记录`
+    );
+    minimumMonthSetting.addSlider((slider) => {
+      slider.sliderEl.setAttribute("data-mind-trace-focus-key", "monthly-minimum-weeks");
+      return slider.setLimits(1, 5, 1).setValue(minimumWeeks).setDynamicTooltip().onChange(async (value) => {
+        this.plugin.settings.monthlyReportMinimumWeeks = value;
+        minimumMonthSetting.setDesc(`当前为 ${value} 周；完整月需要不同周一至周日区间各有至少一天记录`);
+        await this.plugin.saveSettings();
+        this.plugin.refreshJournalViews();
+      });
+    });
+    const monthlyGraphEventLimit = Math.min(200, Math.max(50, Math.round((Number(this.plugin.settings.monthlyGraphEventLimit) || 100) / 10) * 10));
+    this.plugin.settings.monthlyGraphEventLimit = monthlyGraphEventLimit;
+    const monthlyGraphSetting = new import_obsidian5.Setting(analysisSection).setName("月图谱显示事件数").setDesc(
+      `当前月报星图显示 ${monthlyGraphEventLimit} 件；折叠事件账保留全部事件`
+    );
+    monthlyGraphSetting.addSlider((slider) => {
+      slider.sliderEl.setAttribute("data-mind-trace-focus-key", "monthly-graph-event-limit");
+      return slider.setLimits(50, 200, 10).setValue(monthlyGraphEventLimit).setDynamicTooltip().onChange(async (value) => {
+        this.plugin.settings.monthlyGraphEventLimit = value;
+        monthlyGraphSetting.setDesc(`当前月报星图显示 ${value} 件；折叠事件账保留全部事件`);
+        await this.plugin.saveSettings();
+        this.plugin.refreshJournalViews();
+        this.plugin.refreshWeeklyEventViews();
+      });
+    });
+    new import_obsidian5.Setting(analysisSection).setName("月报保存位置").setDesc(
+      `${this.plugin.settings.journalFolder}/报告/月报（跟随日记目录）`
     );
     const privacySection = this.createSection(
       "隐私与草稿",
@@ -9524,8 +10330,12 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     addButton.createSpan({ text: "添加" });
     addButton.disabled = coreQuestions.length >= 8;
     addButton.addEventListener("click", () => {
+      const questions = configuredCoreQuestions(this.plugin.settings);
+      if (questions.length >= 8) {
+        return;
+      }
       this.plugin.settings.coreQuestions = [
-        ...coreQuestions,
+        ...questions,
         "今天还有什么值得记下？"
       ];
       void this.plugin.saveSettings().then(() => {
@@ -9553,13 +10363,17 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         }
       });
       input.addEventListener("change", () => {
+        const questions = configuredCoreQuestions(this.plugin.settings);
         const value = input.value.trim();
         if (value.length === 0) {
-          input.value = question;
+          input.value = questions[index] ?? question;
           showMindTraceFieldError(input, "核心问题不能为空");
           return;
         }
-        const questions = [...coreQuestions];
+        if (index >= questions.length) {
+          input.value = questions[index] ?? question;
+          return;
+        }
         questions[index] = value;
         this.plugin.settings.coreQuestions = questions;
         void this.plugin.saveSettings();
@@ -9573,9 +10387,12 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         `上移问题 ${index + 1}`,
         index === 0,
         () => {
-          const questions = [...coreQuestions];
-          questions.splice(index, 1);
-          questions.splice(index - 1, 0, question);
+          const questions = configuredCoreQuestions(this.plugin.settings);
+          if (index <= 0 || index >= questions.length) {
+            return;
+          }
+          const [currentQuestion] = questions.splice(index, 1);
+          questions.splice(index - 1, 0, currentQuestion);
           this.plugin.settings.coreQuestions = questions;
           void this.plugin.saveSettings().then(() => {
             this.display(true);
@@ -9588,9 +10405,12 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         `下移问题 ${index + 1}`,
         index === coreQuestions.length - 1,
         () => {
-          const questions = [...coreQuestions];
-          questions.splice(index, 1);
-          questions.splice(index + 1, 0, question);
+          const questions = configuredCoreQuestions(this.plugin.settings);
+          if (index < 0 || index >= questions.length - 1) {
+            return;
+          }
+          const [currentQuestion] = questions.splice(index, 1);
+          questions.splice(index + 1, 0, currentQuestion);
           this.plugin.settings.coreQuestions = questions;
           void this.plugin.saveSettings().then(() => {
             this.display(true);
@@ -9602,23 +10422,31 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         "trash-2",
         `删除问题 ${index + 1}`,
         coreQuestions.length === 1,
-        () => openMindTraceOperation(this.app, this.plugin, {
-          eyebrow: "心迹设置 · 核心问题",
-          title: `删除第 ${index + 1} 个核心问题？`,
-          description: `“${question}”将从下一篇新日记的问题列表中移除。`,
-          confirmLabel: "删除问题",
-          warning: true,
-          stages: ["更新问题列表"],
-          run: async (update) => {
-            update({ stage: 1, total: 1, title: "更新问题列表", detail: "正在保存新的问题顺序。" });
-            this.plugin.settings.coreQuestions = coreQuestions.filter((_, questionIndex) => questionIndex !== index);
-            await this.plugin.saveSettings();
-          },
-          onSuccess: () => this.display(true),
-          successTitle: "核心问题已删除",
-          successDetail: "新的问题列表会从下一篇日记开始使用。",
-          successLabel: "返回设置"
-        })
+        () => {
+          const latestQuestions = configuredCoreQuestions(this.plugin.settings);
+          const latestQuestion = latestQuestions[index] ?? question;
+          return openMindTraceOperation(this.app, this.plugin, {
+            eyebrow: "心迹设置 · 核心问题",
+            title: `删除第 ${index + 1} 个核心问题？`,
+            description: `“${latestQuestion}”将从下一篇新日记的问题列表中移除。`,
+            confirmLabel: "删除问题",
+            warning: true,
+            stages: ["更新问题列表"],
+            run: async (update) => {
+              update({ stage: 1, total: 1, title: "更新问题列表", detail: "正在保存新的问题顺序。" });
+              const questions = configuredCoreQuestions(this.plugin.settings);
+              if (questions.length <= 1 || index < 0 || index >= questions.length) {
+                return;
+              }
+              this.plugin.settings.coreQuestions = questions.filter((_, questionIndex) => questionIndex !== index);
+              await this.plugin.saveSettings();
+            },
+            onSuccess: () => this.display(true),
+            successTitle: "核心问题已删除",
+            successDetail: "新的问题列表会从下一篇日记开始使用。",
+            successLabel: "返回设置"
+          });
+        }
       );
     }
     new import_obsidian5.Setting(section).setName("恢复推荐问题").setDesc("恢复心迹默认的三道问题，不影响进行中的草稿").addButton(
@@ -9676,7 +10504,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     container.addClass("mind-trace-provider-card");
     const kind = this.plugin.settings.activeProvider;
     const configuration = this.plugin.settings.providers[kind];
-    new import_obsidian5.Setting(container).setName("模型服务").setDesc("选择当前用于追问、整理日记和生成周报的服务").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(container).setName("模型服务").setDesc("选择当前用于追问、整理日记以及生成周报、月报的服务").addDropdown((dropdown) => {
       dropdown.selectEl.setAttribute("data-mind-trace-focus-key", "active-provider");
       for (const [value, label] of Object.entries(PROVIDER_LABELS)) {
         dropdown.addOption(value, label);
@@ -10082,9 +10910,6 @@ function extractSections(content) {
   });
   return excerpts.join("\n\n");
 }
-function upgradeJournalSchemaVersion(content) {
-  return content.replace(/mind-trace-version:\s*[12]\b/, "mind-trace-version: 3");
-}
 function insertSessionEventSection(content, sessionIndex, events, options = {}) {
   const headings = [...content.matchAll(/^## \d{2}:\d{2}\s*$/gm)];
   const heading = headings[sessionIndex];
@@ -10104,7 +10929,7 @@ function insertSessionEventSection(content, sessionIndex, events, options = {}) 
   const insertion = `\n\n${eventMarkdownSection(events, options)}\n`;
   const absolute = blockStart + nextSection;
   const updated = `${content.slice(0, absolute)}${insertion}${content.slice(absolute)}`;
-  return upgradeJournalSchemaVersion(updated);
+  return updated;
 }
 function replaceSessionEventSection(content, sessionIndex, events, options = {}) {
   const validated = validateEvents(events);
@@ -10128,7 +10953,7 @@ function replaceSessionEventSection(content, sessionIndex, events, options = {})
   }
   const replacement = `${eventMarkdownSection(validated, options)}\n\n`;
   const updatedBlock = `${block.slice(0, eventHeading.index)}${replacement}${block.slice(nextHeading.index)}`;
-  return upgradeJournalSchemaVersion(`${content.slice(0, blockStart)}${updatedBlock}${content.slice(blockEnd)}`);
+  return `${content.slice(0, blockStart)}${updatedBlock}${content.slice(blockEnd)}`;
 }
 var JournalRepository = class {
   constructor(app) {
@@ -10313,6 +11138,16 @@ function weeklyReportFolder(settings) {
 function weeklyReportPath(settings, period) {
   return `${weeklyReportFolder(settings)}/${period.start}--${period.end}.md`;
 }
+function monthlyReportFolder(settings) {
+  const journalFolder = (0, import_obsidian6.normalizePath)(settings.journalFolder.trim());
+  if (journalFolder.length === 0 || journalFolder === "/") {
+    throw new Error("日记目录不能为空");
+  }
+  return `${journalFolder}/报告/月报`;
+}
+function monthlyReportPath(settings, period) {
+  return `${monthlyReportFolder(settings)}/${period.start.slice(0, 7)}.md`;
+}
 function scoreCell(value) {
   return value === null ? "—" : value.toFixed(1);
 }
@@ -10326,10 +11161,11 @@ function scoreDelta(current, previous, key) {
 function evidenceSuffix(dates) {
   return dates.length > 0 ? ` _（${dates.join("、")}）_` : "";
 }
-function weeklyEventSnapshotLines(source) {
+function weeklyEventSnapshotLines(source, options = {}) {
+  const scope = options.scope ?? "本周";
   const aggregate = source.events ?? aggregateEventRecords([]);
   if (aggregate.records.length === 0) {
-    return ["_本周尚没有可用的结构化事件。_"];
+    return [`_${scope}尚没有可用的结构化事件。_`];
   }
   const hubs = aggregate.nodes.slice(0, 10).map((node) => `- **${EVENT_KIND_LABELS[node.kind]}｜${eventMarkdownText(node.name)}**：${node.eventIds.size} 个事件，${node.dates.size} 天`);
   const records = [...aggregate.records].sort((left, right) => left.date.localeCompare(right.date) || left.time.localeCompare(right.time) || left.eventIndex - right.eventIndex).flatMap((record) => {
@@ -10422,8 +11258,106 @@ function weeklyReportMarkdown(source, report) {
     ""
   ].join("\n");
 }
-function reportSummaryFromMarkdown(content) {
-  return /^## 一周概览\s*\n+([\s\S]*?)(?=\n## |$)/m.exec(content)?.[1]?.trim() ?? "打开周报，回看这一周的变化。";
+function monthlyRhythmLines(source, report) {
+  const rows = source.weekStats.map((week) => [
+    `| ${week.start.slice(5)}–${week.end.slice(5)} | ${week.days} | ${week.sessions} | ${scoreCell(week.mood)} | ${scoreCell(week.energy)} | ${scoreCell(week.stress)} |`
+  ]).flat();
+  const observations = report.rhythm.map((item) => `- ${item.observation}${evidenceSuffix(item.evidenceDates)}`).join("\n");
+  return [
+    "| 自然周 | 记录日 | 篇数 | 心情 | 精力 | 压力 |",
+    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ...rows,
+    "",
+    observations
+  ];
+}
+function monthlyReportMarkdown(source, report) {
+  const stats = source.stats;
+  const previous = source.previousStats;
+  const comparisonLabel = source.period.status === "partial" ? "较上月同期" : "较上月";
+  const changes = report.changes.map((item) => `- ${item.observation}${evidenceSuffix(item.evidenceDates)}`).join("\n");
+  const causes = report.possibleCauses.map((item) => `- ${item.hypothesis}${evidenceSuffix(item.evidenceDates)}`).join("\n");
+  const themes = report.themes.map((item) => `- **${inlineMarkdown(item.name)}**：${item.observation}`).join("\n");
+  const clues = report.emotionReading.clues.map((item) => `> - ${item}`).join("\n");
+  return [
+    "---",
+    "mind-trace-report: true",
+    "mind-trace-report-version: 3",
+    "report-type: monthly",
+    `period-start: ${source.period.start}`,
+    `period-end: ${source.period.end}`,
+    `period-status: ${source.period.status === "partial" ? "partial" : "complete"}`,
+    `comparison-start: ${source.comparisonPeriod.start}`,
+    `comparison-end: ${source.comparisonPeriod.end}`,
+    `generated-at: ${new Date().toISOString()}`,
+    `source-days: ${stats.days}`,
+    `source-sessions: ${stats.sessions}`,
+    `source-active-weeks: ${stats.activeWeeks}`,
+    `event-count: ${source.events?.records.length ?? 0}`,
+    `event-covered-sessions: ${source.eventCoveredSessions ?? 0}`,
+    `event-source-sessions: ${source.eventSourceSessions ?? stats.sessions}`,
+    "---",
+    "",
+    `# ${source.period.start} 至 ${source.period.end} · 心迹月报${source.period.status === "partial" ? "（截至今天）" : ""}`,
+    "",
+    "## 本月概览",
+    "",
+    report.summary,
+    "",
+    "## 本月数字",
+    "",
+    `| 维度 | 本月 | ${comparisonLabel} |`,
+    "| --- | ---: | ---: |",
+    `| 记录日 | ${stats.days} 天 | ${stats.days - previous.days >= 0 ? "+" : ""}${stats.days - previous.days} 天 |`,
+    `| 活跃周 | ${stats.activeWeeks} 周 | ${stats.activeWeeks - previous.activeWeeks >= 0 ? "+" : ""}${stats.activeWeeks - previous.activeWeeks} 周 |`,
+    `| 心情 | ${scoreCell(stats.mood)} | ${scoreDelta(stats, previous, "mood")} |`,
+    `| 精力 | ${scoreCell(stats.energy)} | ${scoreDelta(stats, previous, "energy")} |`,
+    `| 压力 | ${scoreCell(stats.stress)} | ${scoreDelta(stats, previous, "stress")} |`,
+    "",
+    "## 月内节奏",
+    "",
+    ...monthlyRhythmLines(source, report),
+    "",
+    "## 本月事件图谱",
+    "",
+    ...weeklyEventSnapshotLines(source, { scope: "本月" }),
+    "",
+    "## 发生的变化",
+    "",
+    changes,
+    "",
+    "## 可能的原因",
+    "",
+    causes,
+    "",
+    "## AI 情绪假设",
+    "",
+    "> [!note] 这是根据文字线索的假设性解读，不是心理或医学诊断。",
+    `> ${report.emotionReading.hypothesis}`,
+    ">",
+    clues,
+    ">",
+    `> **另一种可能：**${report.emotionReading.alternative}`,
+    "",
+    "## 反复出现的主题",
+    "",
+    themes,
+    "",
+    "## 下月最小的一步",
+    "",
+    `**${report.nextStep.action}**`,
+    "",
+    report.nextStep.reason,
+    "",
+    "## 留给自己的问题",
+    "",
+    report.selfQuestion,
+    source.truncated ? "\n> [!info] 本月日记较长，AI 分析使用了截取后的摘录。" : "",
+    ""
+  ].join("\n");
+}
+function reportSummaryFromMarkdown(content, heading = "一周概览") {
+  return new RegExp(`^## ${heading}\\s*\\n+([\\s\\S]*?)(?=\\n## |$)`, "m").exec(content)?.[1]?.trim() ?? (heading === "本月概览" ? "打开月报，回看这个月的变化。" : "打开周报，回看这一周的变化。");
 }
 var WeeklyReportRepository = class {
   constructor(app) {
@@ -10464,10 +11398,12 @@ var WeeklyReportRepository = class {
     }
     allEntries.sort((left, right) => left.date.localeCompare(right.date));
     const entries = periodEntries(allEntries, period);
-    const previousStats = metricSnapshot(periodEntries(allEntries, previousPeriod(period)));
+    const comparison = comparisonPeriod(period);
+    const previousStats = metricSnapshot(periodEntries(allEntries, comparison));
     const excerpts = [];
     const sourceFiles = [];
     const successfulDays = /* @__PURE__ */ new Set();
+    const monthlyExcerptBlocks = new Map();
     let sessions = 0;
     let length = 0;
     let truncated = false;
@@ -10475,7 +11411,6 @@ var WeeklyReportRepository = class {
     const eventRecords = [];
     const eventMissingSessions = [];
     const eventCalibrationSessions = [];
-    const eventLegacySessions = [];
     const eventReviewedSessions = [];
     const eventInvalidSessions = [];
     let eventSourceSessions = 0;
@@ -10517,8 +11452,7 @@ var WeeklyReportRepository = class {
               summary: event.summary,
               arguments: event.arguments,
               relations: event.relations,
-              elements: event.elements,
-              legacy: event.legacy === true
+              elements: event.elements
             })));
             const sourceSession = {
               filePath: file.path,
@@ -10533,9 +11467,7 @@ var WeeklyReportRepository = class {
               eventSchema: session.eventSchema,
               eventReviewed: session.eventReviewed
             };
-            if (session.eventSchema < 3) {
-              eventLegacySessions.push(sourceSession);
-            } else if (session.eventReviewed) {
+            if (session.eventReviewed) {
               eventReviewedSessions.push(sourceSession);
             } else {
               eventCalibrationSessions.push(sourceSession);
@@ -10575,7 +11507,12 @@ var WeeklyReportRepository = class {
           }
           sessions += 1;
           successfulDays.add(journal.date);
-          if (acceptingExcerpts && length + block.length <= 24e3) {
+          if (period.type === "monthly") {
+            const week = periodWeekStart(journal.date) ?? journal.date;
+            const blocks = monthlyExcerptBlocks.get(week) ?? [];
+            blocks.push(block);
+            monthlyExcerptBlocks.set(week, blocks);
+          } else if (acceptingExcerpts && length + block.length <= 24e3) {
             excerpts.push(block);
             length += block.length;
           } else {
@@ -10589,20 +11526,50 @@ var WeeklyReportRepository = class {
     const stats = metricSnapshot(entries.filter((entry) => successfulDays.has(entry.date)));
     stats.days = successfulDays.size;
     stats.sessions = sessions;
+    if (period.type === "monthly") {
+      const activeWeeks = [...monthlyExcerptBlocks.keys()].sort();
+      const weekBudget = activeWeeks.length > 0 ? Math.floor(24e3 / activeWeeks.length) : 0;
+      let monthlyLength = 0;
+      for (const week of activeWeeks) {
+        const blocks = monthlyExcerptBlocks.get(week) ?? [];
+        const sessionBudget = blocks.length > 0 ? Math.max(1, Math.floor(weekBudget / blocks.length)) : 0;
+        for (const block of blocks) {
+          if (monthlyLength >= 24e3 || sessionBudget <= 0) {
+            truncated = true;
+            continue;
+          }
+          const remaining = Math.min(sessionBudget, 24e3 - monthlyLength);
+          const excerpt = block.slice(0, remaining);
+          excerpts.push(excerpt);
+          monthlyLength += excerpt.length;
+          if (excerpt.length < block.length) {
+            truncated = true;
+          }
+        }
+      }
+    }
+    const weekStats = activeWeekStats(entries.filter((entry) => successfulDays.has(entry.date)), period);
+    stats.activeWeeks = weekStats.length;
+    previousStats.activeWeeks = activeWeekStats(periodEntries(allEntries, comparison), comparison).length;
+    const excerptText = excerpts.join("\n\n");
+    if (period.type === "monthly" && excerptText.length > 24e3) {
+      truncated = true;
+    }
     return {
       period,
+      comparisonPeriod: comparison,
       entries,
       sourceFiles,
-      excerpts: excerpts.join("\n\n"),
+      excerpts: period.type === "monthly" ? excerptText.slice(0, 24e3) : excerptText,
       stats,
       previousStats,
+      weekStats,
       truncated,
       events: aggregateEventRecords(eventRecords),
       eventSourceSessions,
       eventCoveredSessions,
       eventMissingSessions,
       eventCalibrationSessions,
-      eventLegacySessions,
       eventReviewedSessions,
       eventInvalidSessions
     };
@@ -10639,6 +11606,26 @@ var WeeklyReportRepository = class {
     }
   }
 };
+var MonthlyReportRepository = class extends WeeklyReportRepository {
+  find(settings, period) {
+    const file = this.app.vault.getAbstractFileByPath(monthlyReportPath(settings, period));
+    return file instanceof import_obsidian6.TFile ? file : null;
+  }
+  async save(settings, source, report, overwrite = false) {
+    const path = monthlyReportPath(settings, source.period);
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    const content = monthlyReportMarkdown(source, report);
+    if (existing instanceof import_obsidian6.TFile) {
+      if (!overwrite) {
+        return existing;
+      }
+      await this.app.vault.modify(existing, content);
+      return existing;
+    }
+    await this.ensureFolder(monthlyReportFolder(settings));
+    return await this.app.vault.create(path, content);
+  }
+};
 
 // src/main.ts
 var MindTracePlugin = class extends import_obsidian7.Plugin {
@@ -10646,10 +11633,14 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   draft = null;
   repository;
   weeklyReportRepository;
+  monthlyReportRepository;
   historyIndex;
   weeklyReportAttempts = /* @__PURE__ */ new Set();
   weeklyReportInFlight = /* @__PURE__ */ new Map();
   weeklyReportSourceCache = /* @__PURE__ */ new Map();
+  monthlyReportAttempts = /* @__PURE__ */ new Set();
+  monthlyReportInFlight = /* @__PURE__ */ new Map();
+  monthlyReportSourceCache = /* @__PURE__ */ new Map();
   sourceEditLeaves = /* @__PURE__ */ new WeakMap();
   privacyUnlockedUntil = 0;
   privacyTimer = null;
@@ -10661,6 +11652,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     await this.loadPluginData();
     this.repository = new JournalRepository(this.app);
     this.weeklyReportRepository = new WeeklyReportRepository(this.app);
+    this.monthlyReportRepository = new MonthlyReportRepository(this.app);
     this.historyIndex = new JournalHistoryIndex(this);
     this.registerView(
       JOURNAL_VIEW_TYPE,
@@ -10936,7 +11928,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       const calibrationCount = source.eventCalibrationSessions.length;
       onProgress?.({ stage: 2, total: 8, title: "整理图谱事件", detail: calibrationCount > 0 ? `发现 ${calibrationCount} 篇记录需要整周校准。` : "现有事件已经可以直接用于本周图谱。" });
       if (source.eventCalibrationSessions.length > 0) {
-        source = await this.calibrateWeeklyEvents(source, false, onProgress, { model: 3, write: 4, reload: 7, total: 8 });
+        source = await this.calibrateWeeklyEvents(source, onProgress, { model: 3, write: 4, reload: 7, total: 8 });
       }
       onProgress?.({ stage: 5, total: 8, title: "生成周报内容", detail: "正在根据整理后的日记和图谱事件生成本周回顾。" });
       const report = await generateWeeklyReport(this.createProvider(), source, this.settings);
@@ -10959,19 +11951,97 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       this.weeklyReportInFlight.delete(key);
     }
   }
-  async calibrateWeeklyEvents(source, includeLegacy = false, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
-    const mutable = includeLegacy ? [...source.eventCalibrationSessions, ...source.eventLegacySessions] : source.eventCalibrationSessions;
+  async monthlyReportStatus(period = completedPeriod("monthly")) {
+    const key = `${period.start}--${period.end}--${period.status ?? "complete"}`;
+    let source = this.monthlyReportSourceCache.get(key);
+    if (source === void 0) {
+      source = await this.monthlyReportRepository.collect(period);
+      this.monthlyReportSourceCache.set(key, source);
+    }
+    const file = this.monthlyReportRepository.find(this.settings, period);
+    if (file !== null) {
+      const content = await this.app.vault.cachedRead(file);
+      let metadata = {};
+      try {
+        metadata = parseFrontmatter(content);
+      } catch {
+      }
+      const sourceChanged = Number(metadata["source-days"]) !== source.stats.days || Number(metadata["source-sessions"]) !== source.stats.sessions || Number(metadata["source-active-weeks"]) !== source.stats.activeWeeks || metadata["period-status"] !== (period.status ?? "complete") || metadata["comparison-start"] !== source.comparisonPeriod.start || metadata["comparison-end"] !== source.comparisonPeriod.end;
+      return {
+        kind: sourceChanged || this.monthlyReportRepository.isStale(file, source) ? "stale" : "ready",
+        period,
+        source,
+        file,
+        summary: reportSummaryFromMarkdown(content, "本月概览")
+      };
+    }
+    const minimum = period.status === "partial" ? 1 : Math.min(5, Math.max(1, Number(this.settings.monthlyReportMinimumWeeks) || 4));
+    if (period.status === "partial" ? source.stats.days < minimum : source.stats.activeWeeks < minimum) {
+      return { kind: "insufficient", period, source, minimum };
+    }
+    if (!this.isProviderConfigured()) {
+      return { kind: "unconfigured", period, source };
+    }
+    return { kind: "missing", period, source };
+  }
+  async generateMonthlyReport(period = completedPeriod("monthly"), overwrite = false, automatic = false, onProgress = null) {
+    const key = `${period.start}--${period.end}--${period.status ?? "complete"}`;
+    if (automatic && this.monthlyReportAttempts.has(key)) {
+      return await this.monthlyReportStatus(period);
+    }
+    const existingFlight = this.monthlyReportInFlight.get(key);
+    if (existingFlight !== void 0) {
+      return await existingFlight;
+    }
+    if (automatic) {
+      this.monthlyReportAttempts.add(key);
+    }
+    const task = (async () => {
+      onProgress?.({ stage: 1, total: 8, title: "读取本月记录", detail: "正在收集日记、已有事件和月报状态。" });
+      const status = await this.monthlyReportStatus(period);
+      if ((status.kind === "ready" || status.kind === "stale") && !overwrite) {
+        return status;
+      }
+      if (status.kind === "insufficient") {
+        throw new Error(period.status === "partial" ? "本月至少需要 1 个记录日才能生成预览" : `至少需要 ${status.minimum} 个活跃自然周才能生成月报`);
+      }
+      if (status.kind === "unconfigured") {
+        throw new Error("请先在心迹设置中配置模型与 API Key");
+      }
+      let source = status.source;
+      const calibrationCount = source.eventCalibrationSessions.length;
+      onProgress?.({ stage: 2, total: 8, title: "整理月度事件", detail: calibrationCount > 0 ? `发现 ${calibrationCount} 篇记录需要按自然周校准。` : "现有事件已经可以直接用于本月图谱。" });
+      if (calibrationCount > 0) {
+        source = await this.calibrateMonthlyEvents(source, onProgress, { model: 3, write: 4, reload: 7, total: 8 });
+      }
+      onProgress?.({ stage: 5, total: 8, title: "生成月报内容", detail: "正在根据整月日记、节奏和图谱事件生成回顾。" });
+      const report = await generateMonthlyReport(this.createProvider(), source, this.settings);
+      onProgress?.({ stage: 6, total: 8, title: "保存月报", detail: "正在把月报写入本地 Vault。" });
+      const file = await this.monthlyReportRepository.save(this.settings, source, report, overwrite);
+      onProgress?.({ stage: 7, total: 8, title: "构建月度图谱", detail: "正在重新汇总整月事件、实体和明确关系。" });
+      this.emitMetricsChanged();
+      return { kind: "ready", period, source, file, summary: report.summary };
+    })();
+    this.monthlyReportInFlight.set(key, task);
+    try {
+      return await task;
+    } finally {
+      this.monthlyReportInFlight.delete(key);
+    }
+  }
+  async calibrateWeeklyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
+    const mutable = source.eventCalibrationSessions;
     if (mutable.length === 0) {
       return source;
     }
-    const preserved = [...source.eventReviewedSessions, ...(includeLegacy ? [] : source.eventLegacySessions)].reduce((sum, session) => sum + session.events.length, 0);
+    const preserved = source.eventReviewedSessions.reduce((sum, session) => sum + session.events.length, 0);
     const maximum = Math.max(0, (Number(this.settings.weeklyEventLimit) || 50) - preserved);
     if (maximum === 0) {
       showMindTraceNotice(`本周已有 ${preserved} 件保留事件，已达到设置上限；未改写其他事件。`, 8e3);
       return source;
     }
     const knownElements = source.events.nodes.slice(0, 80).map((node) => ({ kind: node.kind, name: node.name }));
-    const preservedSessions = [...source.eventReviewedSessions, ...(includeLegacy ? [] : source.eventLegacySessions)];
+    const preservedSessions = source.eventReviewedSessions;
     onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "校准图谱事件", detail: `正在统一 ${mutable.length} 篇记录中的事件、实体和关系。` });
     const results = await generateEventBackfill(this.createProvider(), mutable, knownElements, maximum, preservedSessions);
     onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "写回日记事件", detail: "正在逐篇保存校准结果。", current: 0, count: new Set(results.map((result) => result.source.filePath)).size });
@@ -10985,6 +12055,59 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
     onProgress?.({ stage: progressPlan.reload, total: progressPlan.total, title: "重新汇总图谱", detail: "正在读取写回后的事件并重建图谱数据。" });
     return await this.weeklyReportRepository.collect(source.period);
+  }
+  async calibrateMonthlyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
+    const mutable = source.eventCalibrationSessions;
+    if (mutable.length === 0) {
+      return source;
+    }
+    const grouped = new Map();
+    for (const session of mutable) {
+      const week = periodWeekStart(session.date) ?? session.date;
+      const values = grouped.get(week) ?? [];
+      values.push(session);
+      grouped.set(week, values);
+    }
+    const preserved = source.eventReviewedSessions;
+    const knownElements = source.events.nodes.slice(0, 120).map((node) => ({ kind: node.kind, name: node.name }));
+    const results = [];
+    const expectedMtimes = new Map(source.sourceFiles.map((file) => [file.path, file.stat.mtime]));
+    onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `正在依次整理 ${grouped.size} 个自然周片段。` });
+    let segment = 0;
+    for (const [week, sessions] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      segment += 1;
+      const preservedSessions = preserved.filter((item) => (periodWeekStart(item.date) ?? item.date) === week);
+      const preservedCount = preservedSessions.reduce((sum, session) => sum + session.events.length, 0);
+      const maximum = Math.max(0, (Number(this.settings.weeklyEventLimit) || 50) - preservedCount);
+      if (maximum === 0) {
+        onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `${week} 已有 ${preservedCount} 件人工保留事件，达到每周上限，跳过模型校准。` });
+        continue;
+      }
+      const generated = await generateEventBackfill(this.createProvider(), sessions, knownElements, maximum, preservedSessions);
+      results.push(...generated);
+      onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `已完成 ${segment}/${grouped.size} 个自然周片段。` });
+    }
+    if (results.length === 0) {
+      return source;
+    }
+    const changed = source.sourceFiles.find((file) => {
+      const current = this.app.vault.getAbstractFileByPath(file.path);
+      return !(current instanceof import_obsidian7.TFile) || current.stat.mtime !== expectedMtimes.get(file.path);
+    });
+    if (changed !== void 0) {
+      throw new Error(`月度校准期间日记发生了修改，已停止写回：${changed.path}`);
+    }
+    onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "写回月度事件", detail: "正在逐篇保存各自然周校准结果。", current: 0, count: new Set(results.map((result) => result.source.filePath)).size });
+    const outcome = await this.repository.applyEventBackfill(results, (current, count) => {
+      onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "写回月度事件", detail: "正在逐篇保存各自然周校准结果。", current, count });
+    });
+    if (outcome.failed.length > 0) {
+      const succeededFiles = new Set(outcome.succeeded.map((item) => item.filePath)).size;
+      const failedFiles = new Set(outcome.failed.map((failure) => failure.filePath)).size;
+      throw new Error(`月度校准部分完成：已写回 ${succeededFiles} 篇文件，${failedFiles} 篇未写回。${[...new Set(outcome.failed.map((failure) => failure.message))].join("；")}`);
+    }
+    onProgress?.({ stage: progressPlan.reload, total: progressPlan.total, title: "重新汇总月度图谱", detail: "正在读取写回后的事件并重建月度图谱数据。" });
+    return await this.monthlyReportRepository.collect(source.period);
   }
   onMetricsChanged(callback) {
     this.metricsListeners.add(callback);
@@ -11357,6 +12480,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   }
   emitMetricsChanged() {
     this.weeklyReportSourceCache.clear();
+    this.monthlyReportSourceCache.clear();
     for (const listener of this.metricsListeners) {
       listener();
     }
@@ -11411,6 +12535,15 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.settings.weeklyGraphEventLimit = Math.min(
       50,
       Math.max(5, Math.min(this.settings.weeklyEventLimit, Math.round(Number(this.settings.weeklyGraphEventLimit) || 20)))
+    );
+    this.settings.monthlyReportAutoGenerate = this.settings.monthlyReportAutoGenerate !== false;
+    this.settings.monthlyReportMinimumWeeks = Math.min(
+      5,
+      Math.max(1, Math.round(Number(this.settings.monthlyReportMinimumWeeks) || 4))
+    );
+    this.settings.monthlyGraphEventLimit = Math.min(
+      200,
+      Math.max(50, Math.round((Number(this.settings.monthlyGraphEventLimit) || 100) / 10) * 10)
     );
     this.draft = data.draft;
     if (typeof this.draft === "object" && this.draft !== null && !Array.isArray(this.draft)) {

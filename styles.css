@@ -4013,11 +4013,6 @@ button.mind-trace-event-ledger-title:hover {
   font-size: var(--font-smallest);
 }
 
-.mind-trace-event-legacy-badge {
-  border-style: dashed !important;
-  color: var(--text-faint) !important;
-}
-
 .mind-trace-event-kind-legend {
   position: static;
   width: max-content;
@@ -7049,5 +7044,173 @@ button.mind-trace-theme-filter-button:hover {
 
   .mind-trace-toast-pill-dot {
     animation: none;
+  }
+}
+
+/* Monthly report: a quieter month-at-a-glance layer over the weekly language. */
+.mind-trace-report-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin: 18px 0 2px;
+  padding: 4px;
+  border: 1px solid var(--mind-trace-hairline);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-secondary) 78%, transparent);
+}
+
+.mind-trace-report-tab {
+  min-width: 72px;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mind-trace-report-tab:hover,
+.mind-trace-report-tab:focus-visible {
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--mind-trace-ink-blue) 10%, transparent);
+}
+
+.mind-trace-report-tab.is-active {
+  color: var(--background-primary);
+  background: var(--mind-trace-ink-blue);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--mind-trace-ink-blue) 24%, transparent);
+}
+
+.mind-trace-monthly-card,
+.mind-trace-monthly-shell,
+.mind-trace-saved-monthly-report {
+  --mind-trace-month-accent: var(--mind-trace-ink-blue);
+}
+
+.mind-trace-home-report-grid {
+  grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
+}
+
+.mind-trace-monthly-report-dot {
+  background: var(--mind-trace-month-accent) !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mind-trace-month-accent) 15%, transparent);
+}
+
+.mind-trace-monthly-rhythm {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--mind-trace-hairline);
+  border-radius: var(--radius-l);
+  background: color-mix(in srgb, var(--background-secondary) 68%, transparent);
+}
+
+.mind-trace-monthly-rhythm-axis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.mind-trace-monthly-rhythm-week {
+  min-height: 116px;
+  padding: 12px;
+  border-top: 2px solid color-mix(in srgb, var(--mind-trace-month-accent) 42%, var(--mind-trace-hairline));
+  border-bottom: 1px solid var(--mind-trace-hairline);
+  background: var(--background-primary);
+}
+
+.mind-trace-monthly-rhythm-label {
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+.mind-trace-monthly-rhythm-bars {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: 7px;
+  height: 48px;
+  margin: 12px 0 8px;
+}
+
+.mind-trace-monthly-rhythm-bar {
+  height: max(6px, calc(var(--mind-trace-rhythm-value) * 8px));
+  min-height: 6px;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--mind-trace-month-accent);
+  opacity: 0.75;
+}
+
+.mind-trace-monthly-rhythm-bar.is-energy {
+  background: var(--mind-trace-energy);
+}
+
+.mind-trace-monthly-rhythm-bar.is-stress {
+  background: var(--mind-trace-stress);
+}
+
+.mind-trace-monthly-rhythm-meta {
+  color: var(--text-faint);
+  font-size: 0.74rem;
+}
+
+.mind-trace-monthly-graph-disclosure {
+  margin-top: 24px;
+  border: 1px solid var(--mind-trace-hairline);
+  border-radius: var(--radius-l);
+  background: color-mix(in srgb, var(--background-secondary) 58%, transparent);
+}
+
+.mind-trace-monthly-graph-disclosure > summary {
+  padding: 16px 18px;
+  color: var(--text-normal);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mind-trace-monthly-graph-disclosure > summary:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.mind-trace-monthly-graph-disclosure .mind-trace-monthly-element-graph {
+  margin: 0;
+  border-top: 1px solid var(--mind-trace-hairline);
+  border-radius: 0 0 var(--radius-l) var(--radius-l);
+}
+
+.mind-trace-monthly-analysis-grid {
+  margin-top: 24px;
+}
+
+@media (max-width: 760px) {
+  .mind-trace-report-tabs {
+    width: 100%;
+  }
+
+  .mind-trace-report-tab {
+    flex: 1;
+  }
+
+  .mind-trace-home-report-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mind-trace-monthly-rhythm {
+    padding: 18px;
+  }
+
+  .mind-trace-monthly-rhythm-axis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mind-trace-report-tab,
+  .mind-trace-monthly-rhythm-bar {
+    transition: none;
   }
 }
