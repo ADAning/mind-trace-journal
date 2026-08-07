@@ -119,7 +119,8 @@ function currentWeekPeriod(now = /* @__PURE__ */ new Date()) {
   return {
     type: "weekly",
     start: localDateString(start),
-    end: localDateString(now)
+    end: localDateString(now),
+    status: "partial"
   };
 }
 function currentMonthPeriod(now = /* @__PURE__ */ new Date()) {
@@ -197,6 +198,63 @@ function activeWeekStats(entries, period) {
 }
 function periodEntries(entries, period) {
   return entries.filter((entry) => entry.date >= period.start && entry.date <= period.end);
+}
+function formationProgress(entries, period, minimum) {
+  const safeMinimum = Math.max(1, minimum);
+  const days = metricSnapshot(periodEntries(entries, period)).days;
+  return {
+    days,
+    minimum: safeMinimum,
+    percent: (days / safeMinimum) * 100,
+    overflow: Math.max(0, days - safeMinimum)
+  };
+}
+function monthlyWeekSegments(entries, period, minimum) {
+  const safeMinimum = Math.max(1, minimum);
+  const monthStart = parseLocalDate(period.start);
+  if (monthStart === null) {
+    return [];
+  }
+  const lastDayOfMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+  const monthStartOrd = localDayOrdinal(monthStart);
+  const monthEndOrd = localDayOrdinal(lastDayOfMonth);
+  const segments = [];
+  let cursor = parseLocalDate(periodWeekStart(period.start));
+  while (cursor !== null && cursor <= lastDayOfMonth) {
+    const segEnd = addLocalDays(cursor, 6);
+    const segStartOrd = localDayOrdinal(cursor);
+    const segEndOrd = localDayOrdinal(segEnd);
+    const inMonthDays = Math.min(segEndOrd, monthEndOrd) - Math.max(segStartOrd, monthStartOrd) + 1;
+    const isTail = cursor < monthStart;
+    const isHead = segEnd > lastDayOfMonth;
+    if (isTail || !isHead || inMonthDays >= safeMinimum) {
+      const segPeriod = { start: localDateString(cursor), end: localDateString(segEnd) };
+      const days = metricSnapshot(periodEntries(entries, segPeriod)).days;
+      segments.push({
+        start: segPeriod.start,
+        end: segPeriod.end,
+        days,
+        minimum: safeMinimum,
+        percent: (days / safeMinimum) * 100,
+        overflow: Math.max(0, days - safeMinimum),
+        reached: days >= safeMinimum
+      });
+    }
+    cursor = addLocalDays(segEnd, 1);
+  }
+  return segments;
+}
+function formationCaption(label, progress) {
+  if (progress.days === 0) {
+    return "写下今天的落点，进度就会点亮。";
+  }
+  if (progress.overflow > 0) {
+    return `已超过${label}门槛 ${progress.overflow} 天，日记还在生长。`;
+  }
+  if (progress.days >= progress.minimum) {
+    return `已点亮门槛，${label}可以生成了。`;
+  }
+  return `${label}门槛 ${progress.minimum} 个记录日，已点亮 ${progress.days} 个，还差 ${progress.minimum - progress.days} 天。`;
 }
 function periodLabel(period) {
   return `${period.start.slice(5).replace("-", ".")} — ${period.end.slice(5).replace("-", ".")}`;
@@ -1384,7 +1442,7 @@ var DEFAULT_SETTINGS = {
   customInstructions: "",
   dashboardRange: 30,
   weeklyReportAutoGenerate: true,
-  weeklyReportMinimumDays: 3,
+  weeklyReportMinimumDays: 4,
   weeklyEventLimit: 50,
   weeklyGraphEventLimit: 20,
   monthlyReportAutoGenerate: true,
@@ -2251,6 +2309,43 @@ function openMindTraceOperation(app, plugin, configuration) {
     new MindTraceTaskToast(app, plugin, configuration).open();
   }).open();
   return null;
+}
+async function trashMindTraceFile(view, file, label) {
+  if (view.file?.path !== file.path) {
+    showMindTraceNotice("页面已经切换，未执行删除");
+    return;
+  }
+  const current = view.app.vault.getAbstractFileByPath(file.path);
+  if (!(current instanceof import_obsidian7.TFile)) {
+    showMindTraceNotice(`这篇${label}已经移动或删除`);
+    return;
+  }
+  try {
+    await view.app.fileManager.trashFile(current);
+    view.plugin.historyIndex?.invalidate(file.path);
+    view.plugin.emitMetricsChanged();
+    showMindTraceNotice(`${label}已删除`);
+    view.leaf.detach();
+  } catch (error) {
+    showMindTraceNotice(`无法删除${label}：${errorMessage(error)}`, 8e3);
+  }
+}
+function confirmMindTraceFileDeletion(view, label) {
+  const file = view.file;
+  if (!(file instanceof import_obsidian7.TFile)) {
+    showMindTraceNotice(`这篇${label}已经移动或删除`);
+    return;
+  }
+  const description = label === "日记" ? "仅删除当前日记文件；已有周报和月报文件不会同时删除。文件将按照 Obsidian 当前的文件删除设置处理。" : `仅删除当前${label}文件；用于生成它的日记不会被删除。文件将按照 Obsidian 当前的文件删除设置处理。`;
+  new MindTraceConfirmModal(view.app, view.plugin, {
+    eyebrow: `心迹${label} · 删除确认`,
+    title: `删除这篇${label}？`,
+    description,
+    confirmLabel: `删除${label}`,
+    warning: true
+  }, () => {
+    void trashMindTraceFile(view, file, label);
+  }).open();
 }
 
 // src/journal-view.ts
@@ -4497,7 +4592,7 @@ function renderSavedJournal(container, document2, options = {}) {
   header.createEl("p", {
     text: `共 ${document2.sessions.length} 次记录`
   });
-  if (options.onEditSource !== void 0 || options.onExportPdf !== void 0) {
+  if (options.onEditSource !== void 0 || options.onExportPdf !== void 0 || options.onDelete !== void 0) {
     const actions = header.createDiv({
       cls: "mind-trace-saved-header-actions"
     });
@@ -4522,6 +4617,18 @@ function renderSavedJournal(container, document2, options = {}) {
         }
       });
       editSource.addEventListener("click", options.onEditSource);
+    }
+    if (options.onDelete !== void 0) {
+      const deleteFile = actions.createEl("button", {
+        cls: "mind-trace-delete-file",
+        text: "删除",
+        attr: {
+          type: "button",
+          "aria-label": "删除这篇心迹日记"
+        }
+      });
+      deleteFile.disabled = options.deleteDisabled === true;
+      deleteFile.addEventListener("click", options.onDelete);
     }
   }
   const selectedSessionIndex = Math.max(
@@ -4854,7 +4961,11 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
         },
         onExportPdf: () => {
           this.exportPdf(document2);
-        }
+        },
+        onDelete: () => {
+          confirmMindTraceFileDeletion(this, "日记");
+        },
+        deleteDisabled: this.eventSaveBusy
       });
     } catch (error) {
       this.renderError(
@@ -5236,6 +5347,7 @@ function parseSavedWeeklyReport(content, frontmatter) {
     reportVersion,
     periodStart,
     periodEnd,
+    periodStatus: weeklyReportFrontmatterStatus(frontmatter),
     generatedAt,
     sourceDays,
     sourceSessions,
@@ -6206,6 +6318,11 @@ function renderSavedWeeklyReport(container, report, options = {}) {
     edit.disabled = options.busy === true;
     edit.addEventListener("click", options.onEditSource);
   }
+  if (options.onDelete !== void 0) {
+    const deleteFile = actions.createEl("button", { cls: "mind-trace-delete-file", text: "删除", attr: { type: "button", "aria-label": "删除这篇心迹周报" } });
+    deleteFile.disabled = options.deleteDisabled === true;
+    deleteFile.addEventListener("click", options.onDelete);
+  }
   if (options.busy === true) {
     const status = shell.createDiv({ cls: "mind-trace-report-inline-status", attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
     attachLlmActivityStatus(status, options.llmActivitySource, "正在根据当前日记重新整理这一周…");
@@ -6323,6 +6440,11 @@ function renderSavedMonthlyReport(container, report, options = {}) {
     const edit = actions.createEl("button", { cls: "mind-trace-edit-source", text: "编辑 Markdown", attr: { type: "button" } });
     edit.disabled = options.busy === true;
     edit.addEventListener("click", options.onEditSource);
+  }
+  if (options.onDelete !== void 0) {
+    const deleteFile = actions.createEl("button", { cls: "mind-trace-delete-file", text: "删除", attr: { type: "button", "aria-label": "删除这篇心迹月报" } });
+    deleteFile.disabled = options.deleteDisabled === true;
+    deleteFile.addEventListener("click", options.onDelete);
   }
   if (options.busy === true) {
     const status = shell.createDiv({ cls: "mind-trace-report-inline-status", attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
@@ -6509,6 +6631,10 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         onEditSource: () => {
           void this.openMarkdownSource();
         },
+        onDelete: () => {
+          confirmMindTraceFileDeletion(this, report.reportType === "monthly" ? "月报" : "周报");
+        },
+        deleteDisabled: this.busy || this.backfillBusy,
         onOpenEvidenceDate: (date) => {
           void this.plugin.openJournalDate(date);
         },
@@ -6906,6 +7032,7 @@ function collectWeeklyReportFiles(app) {
       file,
       start,
       end: typeof frontmatter["period-end"] === "string" ? frontmatter["period-end"] : "",
+      status: weeklyReportFrontmatterStatus(frontmatter),
       generatedAt: typeof frontmatter["generated-at"] === "string" ? frontmatter["generated-at"] : "",
       days: Number(frontmatter["source-days"]) || 0,
       sessions: Number(frontmatter["source-sessions"]) || 0
@@ -7476,16 +7603,18 @@ var JournalView = class extends import_obsidian4.ItemView {
   }
   generateCurrentWeekReport() {
     const period = currentWeekPeriod();
+    const existingPreview = this.plugin.weeklyReportRepository.find(this.plugin.settings, period);
+    const hasExisting = existingPreview !== null;
     openMindTraceOperation(this.app, this.plugin, {
       eyebrow: "心迹 · 本周周报",
-      title: "生成本周周报？",
-      description: "把当前自然周尚未结束的日记也纳入统计，生成本周版本；完整周结束后仍会单独生成。",
-      confirm: false,
-      confirmLabel: "开始生成",
-      warning: false,
+      title: hasExisting ? "更新本周周报？" : "生成本周周报？",
+      description: hasExisting ? "把当前自然周新增的日记纳入统计，替换现有本周预览；完整周结束后仍会单独生成。" : "把当前自然周尚未结束的日记也纳入统计，生成本周版本；完整周结束后仍会单独生成。",
+      confirm: hasExisting,
+      confirmLabel: hasExisting ? "更新周报" : "开始生成",
+      warning: hasExisting,
       stages: ["读取本周记录", "整理图谱事件", "模型校准事件", "逐篇写回日记", "生成周报内容", "保存周报", "构建图谱数据", "更新周报与图谱"],
       run: async (update) => {
-        return await this.plugin.generateWeeklyReport(period, false, false, update);
+        return await this.plugin.generateWeeklyReport(period, hasExisting, false, update);
       },
       successTitle: "本周周报已生成",
       successDetail: "当前自然周已生成一份周报版本。",
@@ -7586,10 +7715,8 @@ var JournalView = class extends import_obsidian4.ItemView {
       const topGrid = shell.createDiv({ cls: "mind-trace-home-grid mind-trace-home-report-grid" });
       const calendarCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
       const weeklyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
-      const monthlyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
       dashboard.renderCalendar(result.entries, calendarCell);
       this.renderWeeklyReportCard(weeklyCell);
-      this.renderMonthlyReportCard(monthlyCell);
       const emptySection = shell.createDiv({ cls: "mind-trace-home-section" });
       dashboard.renderEmpty(emptySection);
       this.homeDashboard = dashboard;
@@ -7606,9 +7733,7 @@ var JournalView = class extends import_obsidian4.ItemView {
     const topGrid = shell.createDiv({ cls: "mind-trace-home-grid mind-trace-home-report-grid" });
     const calendarCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
     const weeklyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
-    const monthlyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
     this.renderWeeklyReportCard(weeklyCell);
-    this.renderMonthlyReportCard(monthlyCell);
     dashboard.renderCalendar(result.entries, calendarCell);
     const trendSection = shell.createDiv({ cls: "mind-trace-home-section mind-trace-home-panel" });
     dashboard.renderTrend(trendSection, filtered, this.plugin.settings.dashboardRange, previousFiltered);
@@ -7630,6 +7755,134 @@ var JournalView = class extends import_obsidian4.ItemView {
     window.setTimeout(() => {
       void this.loadWeeklyReportCard();
     }, 0);
+  }
+  renderFormationStrip(container, entries) {
+    const settings = this.plugin.settings;
+    const strip = container.createDiv({ cls: "mind-trace-formation-strip" });
+    const weekProgress = formationProgress(entries, currentWeekPeriod(), settings.weeklyReportMinimumDays);
+    this.renderFormationBlock(strip, {
+      kind: "weekly",
+      kicker: "本周正在形成",
+      label: "周报",
+      periodLabel: periodLabel(currentWeekPeriod()),
+      days: weekProgress.days,
+      minimum: weekProgress.minimum,
+      countText: `${weekProgress.days} / ${weekProgress.minimum} 个记录日`,
+      percent: weekProgress.percent,
+      cells: weekProgress.minimum,
+      overflow: weekProgress.overflow
+    });
+    const monthSegments = monthlyWeekSegments(entries, currentMonthPeriod(), settings.weeklyReportMinimumDays);
+    const reachedCount = monthSegments.filter((segment) => segment.reached).length;
+    this.renderMonthlyFormationBlock(strip, {
+      kicker: "本月正在形成",
+      label: "月报",
+      periodLabel: periodLabel(currentMonthPeriod()),
+      segments: monthSegments,
+      reachedCount,
+      total: monthSegments.length,
+      totalDays: monthSegments.reduce((sum, segment) => sum + segment.days, 0)
+    });
+  }
+  renderFormationBlock(container, view) {
+    const { kind, kicker, label, periodLabel, days, minimum, countText, percent, cells, overflow } = view;
+    const block = container.createDiv({ cls: `mind-trace-formation-block is-${kind}` });
+    const head = block.createDiv({ cls: "mind-trace-formation-head" });
+    const meta = head.createDiv({ cls: "mind-trace-formation-meta" });
+    meta.createSpan({ cls: "mind-trace-formation-kicker", text: `${kicker} · ${label}` });
+    meta.createSpan({ cls: "mind-trace-formation-period", text: periodLabel });
+    const total = head.createDiv({ cls: "mind-trace-formation-total" });
+    total.createSpan({ cls: "mind-trace-formation-count", text: countText });
+    const shown = overflow > 0 ? days : (minimum > 0 ? minimum : 1);
+    const fillWidth = minimum > 0 && overflow > 0 ? (minimum / days) * 100 : Math.min(100, percent);
+    const spillWidth = overflow > 0 ? (overflow / days) * 100 : 0;
+    const level = block.createDiv({ cls: "mind-trace-formation-level" });
+    level.createSpan({ cls: "mind-trace-formation-percent", text: `${Math.round(percent)}%`, attr: { style: `left: ${Math.min(100, percent)}%` } });
+    const bar = block.createDiv({ cls: "mind-trace-formation-bar" });
+    const track = bar.createDiv({
+      cls: "mind-trace-formation-track",
+      attr: {
+        role: "progressbar",
+        "aria-label": `${label}形成进度`,
+        "aria-valuemin": "0",
+        "aria-valuemax": "100",
+        "aria-valuenow": String(Math.min(100, Math.round(percent))),
+        "aria-valuetext": countText
+      }
+    });
+    track.createDiv({ cls: "mind-trace-formation-fill", attr: { style: `width: ${fillWidth}%` } });
+    for (let index = 1; index < shown; index += 1) {
+      track.createDiv({ cls: "mind-trace-formation-pip", attr: { style: `left: ${(index / shown) * 100}%`, "aria-hidden": "true" } });
+    }
+    if (cells > 0) {
+      const thresholdStyle = overflow > 0 ? `left: ${fillWidth}%; transform: translateX(-50%);` : "";
+      track.createDiv({ cls: "mind-trace-formation-threshold", attr: { title: "最低生成门槛", "aria-hidden": "true", style: thresholdStyle } });
+    }
+    if (overflow > 0) {
+      block.addClass("is-overflow");
+      track.createDiv({
+        cls: "mind-trace-formation-spill",
+        attr: { style: `left: ${fillWidth}%; width: ${spillWidth}%`, "aria-hidden": "true" }
+      });
+    }
+    block.createDiv({ cls: "mind-trace-formation-caption", text: formationCaption(label, { days, minimum, overflow }) });
+  }
+  renderMonthlyFormationBlock(container, view) {
+    const { kicker, label, periodLabel, segments, reachedCount, total, totalDays } = view;
+    const block = container.createDiv({ cls: "mind-trace-formation-block is-monthly" });
+    const head = block.createDiv({ cls: "mind-trace-formation-head" });
+    const meta = head.createDiv({ cls: "mind-trace-formation-meta" });
+    meta.createSpan({ cls: "mind-trace-formation-kicker", text: `${kicker} · ${label}` });
+    meta.createSpan({ cls: "mind-trace-formation-period", text: periodLabel });
+    const totalEl = head.createDiv({ cls: "mind-trace-formation-total" });
+    const count = totalEl.createSpan({ cls: "mind-trace-formation-count", text: `已达成 ${reachedCount}/${total} 周` });
+    if (reachedCount === total) {
+      count.addClass("is-complete");
+    }
+    const labels = block.createDiv({ cls: "mind-trace-formation-seg-labels" });
+    for (const segment of segments) {
+      const label = labels.createSpan({ cls: "mind-trace-formation-seg-label" });
+      if (segment.reached) {
+        label.addClass("is-reached");
+        label.textContent = "✓";
+        label.setAttribute("title", `已达成 ${Math.round(segment.percent)}%`);
+      } else {
+        label.textContent = `${Math.round(segment.percent)}%`;
+      }
+    }
+    const bar = block.createDiv({ cls: "mind-trace-formation-bar" });
+    const track = bar.createDiv({
+      cls: "mind-trace-formation-segments",
+      attr: {
+        role: "progressbar",
+        "aria-label": `${label}各周进度`,
+        "aria-valuemin": "0",
+        "aria-valuemax": String(total),
+        "aria-valuenow": String(reachedCount),
+        "aria-valuetext": `已达成 ${reachedCount}/${total} 周`
+      }
+    });
+    for (const segment of segments) {
+      const cell = track.createDiv({ cls: `mind-trace-formation-segment${segment.reached ? " is-reached" : ""}` });
+      const fillWidth = segment.overflow > 0 ? (segment.minimum / segment.days) * 100 : Math.min(100, segment.percent);
+      const spillWidth = segment.overflow > 0 ? (segment.overflow / segment.days) * 100 : 0;
+      cell.createDiv({ cls: "mind-trace-formation-seg-fill", attr: { style: `width: ${fillWidth}%`, "aria-hidden": "true" } });
+      if (segment.overflow > 0) {
+        cell.createDiv({ cls: "mind-trace-formation-seg-spill", attr: { style: `left: ${fillWidth}%; width: ${spillWidth}%`, "aria-hidden": "true" } });
+      }
+      cell.setAttribute("title", `${segment.start.slice(5).replace("-", "/")}—${segment.end.slice(5).replace("-", "/")} · ${segment.days}/${segment.minimum} 天`);
+    }
+    let captionText;
+    if (totalDays === 0) {
+      captionText = "写下今天的落点，进度就会点亮。";
+    } else if (reachedCount === total) {
+      captionText = `本月 ${total} 段全部达成，可以准备月报。`;
+    } else if (reachedCount > 0) {
+      captionText = `已达成 ${reachedCount}/${total} 段，继续点亮更多周。`;
+    } else {
+      captionText = "本月还没有达成任何周，继续记录即可点亮。";
+    }
+    block.createDiv({ cls: "mind-trace-formation-caption", text: captionText });
   }
   renderWeeklyReportCard(container, existing = null) {
     const state = this.weeklyReportState;
@@ -8345,6 +8598,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       attr: { role: "heading", "aria-level": "1" }
     });
     heading.createEl("p", { text: "周报保留短周期脉络，月报把自然周节奏、事件与变化放在同一张图上。" });
+    this.renderFormationStrip(shell, collectMetrics(this.app).entries);
     const reportTabs = shell.createDiv({ cls: "mind-trace-report-tabs", attr: { role: "tablist", "aria-label": "报告周期" } });
     for (const [id, label] of [["weekly", "周报"], ["monthly", "月报"]]) {
       const tab = reportTabs.createEl("button", { cls: `mind-trace-report-tab${this.reportTab === id ? " is-active" : ""}`, text: label, attr: { type: "button", role: "tab", "aria-selected": String(this.reportTab === id) } });
@@ -10031,14 +10285,14 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       await this.plugin.saveSettings();
       this.plugin.refreshJournalViews();
     }));
-    const minimumDays = Math.min(7, Math.max(3, Number(this.plugin.settings.weeklyReportMinimumDays) || 3));
+    const minimumDays = Math.min(7, Math.max(4, Number(this.plugin.settings.weeklyReportMinimumDays) || 4));
     this.plugin.settings.weeklyReportMinimumDays = minimumDays;
     const minimumSetting = new import_obsidian5.Setting(analysisSection).setName("周报最低记录日").setDesc(
       `当前为 ${minimumDays} 天；低于门槛时不调用模型`
     );
     minimumSetting.addSlider((slider) => {
       slider.sliderEl.setAttribute("data-mind-trace-focus-key", "weekly-minimum-days");
-      return slider.setLimits(3, 7, 1).setValue(minimumDays).setDynamicTooltip().onChange(async (value) => {
+      return slider.setLimits(4, 7, 1).setValue(minimumDays).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.weeklyReportMinimumDays = value;
       minimumSetting.setDesc(`当前为 ${value} 天；低于门槛时不调用模型`);
       await this.plugin.saveSettings();
@@ -11135,8 +11389,31 @@ function weeklyReportFolder(settings) {
   }
   return `${journalFolder}/报告/周报`;
 }
+function weeklyPeriodStatus(period) {
+  if (period?.status === "partial") {
+    return "partial";
+  }
+  if (period?.status === "complete") {
+    return "complete";
+  }
+  const start = parseLocalDate(period?.start ?? "");
+  const end = parseLocalDate(period?.end ?? "");
+  if (start !== null && end !== null && localDateString(addLocalDays(start, 6)) === localDateString(end)) {
+    return "complete";
+  }
+  return "partial";
+}
+function weeklyReportFrontmatterStatus(frontmatter) {
+  if (frontmatter?.["period-status"] === "partial" || frontmatter?.["period-status"] === "complete") {
+    return frontmatter["period-status"];
+  }
+  const start = typeof frontmatter?.["period-start"] === "string" ? frontmatter["period-start"] : "";
+  const end = typeof frontmatter?.["period-end"] === "string" ? frontmatter["period-end"] : "";
+  return weeklyPeriodStatus({ start, end });
+}
 function weeklyReportPath(settings, period) {
-  return `${weeklyReportFolder(settings)}/${period.start}--${period.end}.md`;
+  const suffix = weeklyPeriodStatus(period) === "partial" ? "preview" : period.end;
+  return `${weeklyReportFolder(settings)}/${period.start}--${suffix}.md`;
 }
 function monthlyReportFolder(settings) {
   const journalFolder = (0, import_obsidian6.normalizePath)(settings.journalFolder.trim());
@@ -11197,6 +11474,7 @@ function weeklyReportMarkdown(source, report) {
     "report-type: weekly",
     `period-start: ${source.period.start}`,
     `period-end: ${source.period.end}`,
+    `period-status: ${weeklyPeriodStatus(source.period)}`,
     `generated-at: ${new Date().toISOString()}`,
     `source-days: ${stats.days}`,
     `source-sessions: ${stats.sessions}`,
@@ -11575,19 +11853,53 @@ var WeeklyReportRepository = class {
     };
   }
   find(settings, period) {
-    const file = this.app.vault.getAbstractFileByPath(weeklyReportPath(settings, period));
-    return file instanceof import_obsidian6.TFile ? file : null;
+    const exact = this.app.vault.getAbstractFileByPath(weeklyReportPath(settings, period));
+    if (exact instanceof import_obsidian6.TFile) {
+      return exact;
+    }
+    const targetWeek = periodWeekStart(period.start) ?? period.start;
+    const targetStatus = weeklyPeriodStatus(period);
+    const folder = weeklyReportFolder(settings);
+    const candidates = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!file.path.startsWith(`${folder}/`)) {
+        continue;
+      }
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (frontmatter?.["mind-trace-report"] !== true || frontmatter?.["report-type"] !== "weekly") {
+        continue;
+      }
+      const start = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
+      const end = typeof frontmatter["period-end"] === "string" ? frontmatter["period-end"] : "";
+      if (periodWeekStart(start) !== targetWeek) {
+        continue;
+      }
+      const status = weeklyReportFrontmatterStatus(frontmatter);
+      if (status !== targetStatus) {
+        continue;
+      }
+      candidates.push({ file, end });
+    }
+    candidates.sort((left, right) => right.end.localeCompare(left.end) || right.file.path.localeCompare(left.file.path));
+    return candidates[0]?.file ?? null;
   }
   isStale(file, source) {
     return source.sourceFiles.some((candidate) => candidate.stat.mtime > file.stat.mtime);
   }
   async save(settings, source, report, overwrite = false) {
     const path = weeklyReportPath(settings, source.period);
-    const existing = this.app.vault.getAbstractFileByPath(path);
+    let existing = this.find(settings, source.period);
     const content = weeklyReportMarkdown(source, report);
     if (existing instanceof import_obsidian6.TFile) {
       if (!overwrite) {
         return existing;
+      }
+      if (existing.path !== path && this.app.vault.getAbstractFileByPath(path) === null && typeof this.app.vault.rename === "function") {
+        try {
+          await this.app.vault.rename(existing, path);
+          existing = this.app.vault.getAbstractFileByPath(path) ?? existing;
+        } catch {
+        }
       }
       await this.app.vault.modify(existing, content);
       return existing;
@@ -11891,7 +12203,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
         summary: reportSummaryFromMarkdown(content)
       };
     }
-    const minimum = Math.min(7, Math.max(3, Number(this.settings.weeklyReportMinimumDays) || 3));
+    const minimum = Math.min(7, Math.max(4, Number(this.settings.weeklyReportMinimumDays) || 4));
     if (source.stats.days < minimum) {
       return { kind: "insufficient", period, source, minimum };
     }
@@ -12526,7 +12838,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.settings.weeklyReportAutoGenerate = this.settings.weeklyReportAutoGenerate !== false;
     this.settings.weeklyReportMinimumDays = Math.min(
       7,
-      Math.max(3, Math.round(Number(this.settings.weeklyReportMinimumDays) || 3))
+      Math.max(4, Math.round(Number(this.settings.weeklyReportMinimumDays) || 4))
     );
     this.settings.weeklyEventLimit = Math.min(
       100,
