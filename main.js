@@ -767,6 +767,9 @@ var DashboardComponent = class {
     this.calendarCursor = new Date(now.getFullYear(), now.getMonth(), 1);
     this.calendarSection = null;
     this.calendarEntries = [];
+    this.heatmapYear = now.getFullYear();
+    this.heatmapSection = null;
+    this.heatmapEntries = [];
     this.facetsContainer = null;
     this.eventsContainer = null;
     this.trendContainer = null;
@@ -968,6 +971,158 @@ var DashboardComponent = class {
       1
     );
     this.renderCalendarContent();
+  }
+  renderYearHeatmap(entries, container = this.container) {
+    this.heatmapEntries = entries;
+    this.heatmapSection = container.createDiv({ cls: "mind-trace-chart-section mind-trace-heatmap-section" });
+    this.renderYearHeatmapContent();
+  }
+  renderYearHeatmapContent() {
+    const section = this.heatmapSection;
+    if (section === null) {
+      return;
+    }
+    section.empty();
+    const heading = section.createDiv({
+      cls: "mind-trace-chart-heading mind-trace-chart-heading-row"
+    });
+    heading.createDiv({
+      cls: "mind-trace-chart-title",
+      text: "年度热力图",
+      attr: { role: "heading", "aria-level": "3" }
+    });
+    const nav = heading.createDiv({ cls: "mind-trace-heatmap-nav" });
+    const previous = nav.createEl("button", {
+      cls: "clickable-icon mind-trace-heatmap-nav-button",
+      text: "‹",
+      attr: { type: "button", "aria-label": "上一年" }
+    });
+    nav.createSpan({
+      cls: "mind-trace-heatmap-year",
+      text: `${this.heatmapYear}年`
+    });
+    const next = nav.createEl("button", {
+      cls: "clickable-icon mind-trace-heatmap-nav-button",
+      text: "›",
+      attr: { type: "button", "aria-label": "下一年" }
+    });
+    previous.addEventListener("click", () => {
+      this.shiftHeatmapYear(-1);
+    });
+    next.addEventListener("click", () => {
+      this.shiftHeatmapYear(1);
+    });
+    const legend = section.createDiv({
+      cls: "mind-trace-heatmap-legend",
+      attr: { role: "img", "aria-label": "心情色阶：1 低落，5 明亮" }
+    });
+    const emptyItem = legend.createSpan({ cls: "mind-trace-heatmap-legend-item" });
+    emptyItem.createSpan({ cls: "mind-trace-heatmap-swatch is-empty" });
+    emptyItem.createSpan({ text: "无记录" });
+    for (let level = 1; level <= 5; level += 1) {
+      const item = legend.createSpan({ cls: "mind-trace-heatmap-legend-item" });
+      item.createSpan({ cls: `mind-trace-heatmap-swatch mind-trace-cal-day-${level}` });
+      item.createSpan({ text: String(level) });
+    }
+    const moodByDate = new Map();
+    const fileByDate = new Map();
+    for (const entry of this.heatmapEntries) {
+      if (!moodByDate.has(entry.date)) {
+        moodByDate.set(entry.date, entry.mood);
+        fileByDate.set(entry.date, entry.filePath);
+      }
+    }
+    const year = this.heatmapYear;
+    const firstWeekday = (new Date(year, 0, 1).getDay() + 6) % 7;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInYear = leap ? 366 : 365;
+    const weeks = Math.ceil((firstWeekday + daysInYear) / 7);
+    const wrap = section.createDiv({ cls: "mind-trace-heatmap-wrap" });
+    const grid = wrap.createDiv({
+      cls: "mind-trace-heatmap",
+      attr: {
+        style: `grid-template-columns: 22px repeat(${weeks}, minmax(9px, 1fr)); grid-template-rows: repeat(8, 16px);`
+      }
+    });
+    for (const [weekday, row] of [["一", 2], ["三", 4], ["五", 6]]) {
+      grid.createSpan({
+        cls: "mind-trace-heatmap-weekday",
+        text: weekday,
+        attr: { style: `grid-column: 1; grid-row: ${row};` }
+      });
+    }
+    const monthStarts = [];
+    let dayCursor = 1;
+    for (let month = 0; month < 12; month += 1) {
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      monthStarts.push(Math.floor((dayCursor - 1 + firstWeekday) / 7));
+      dayCursor += daysInMonth;
+    }
+    for (let month = 0; month < 12; month += 1) {
+      const startWeek = monthStarts[month];
+      const span = month < 11 ? monthStarts[month + 1] - startWeek : weeks - startWeek;
+      grid.createSpan({
+        cls: "mind-trace-heatmap-month",
+        text: `${month + 1}月`,
+        attr: { style: `grid-column: ${startWeek + 2} / span ${span}; grid-row: 1;` }
+      });
+    }
+    const todayString = localDateString(new Date());
+    dayCursor = 1;
+    for (let month = 0; month < 12; month += 1) {
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const dateString = localDateString(new Date(year, month, day));
+        const mood = moodByDate.get(dateString);
+        const filePath = fileByDate.get(dateString);
+        const isToday = dateString === todayString;
+        const openable = (filePath !== void 0 || isToday) && this.onOpenEntry !== null;
+        const classes = ["mind-trace-heat-cell"];
+        if (mood !== void 0) {
+          classes.push(`mind-trace-cal-day-${Math.min(5, Math.max(1, Math.round(mood)))}`);
+        } else {
+          classes.push("is-empty");
+        }
+        if (isToday) {
+          classes.push("is-today");
+        }
+        if (openable) {
+          classes.push("is-openable");
+        }
+        const weekIndex = Math.floor((dayCursor - 1 + firstWeekday) / 7);
+        const weekday = (firstWeekday + dayCursor - 1) % 7;
+        const cellTitle = filePath !== void 0 ? `${dateString} 心情 ${mood.toFixed(1)}` : isToday ? `${dateString} · 开始今天的心迹记录` : dateString;
+        const cellStyle = `grid-column: ${weekIndex + 2}; grid-row: ${weekday + 2};`;
+        const cell = grid.createSpan({
+          cls: classes.join(" "),
+          attr: openable ? {
+            role: "button",
+            tabindex: "0",
+            "aria-label": filePath !== void 0 ? `打开 ${dateString} 的日记` : `开始 ${dateString} 的心迹记录`,
+            title: cellTitle,
+            style: cellStyle
+          } : {
+            title: cellTitle,
+            style: cellStyle
+          }
+        });
+        if (openable) {
+          const open = () => this.onOpenEntry(filePath);
+          cell.addEventListener("click", open);
+          cell.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              open();
+            }
+          });
+        }
+        dayCursor += 1;
+      }
+    }
+  }
+  shiftHeatmapYear(offset) {
+    this.heatmapYear += offset;
+    this.renderYearHeatmapContent();
   }
   renderThemesCard(container, entries) {
     const section = container.createDiv({ cls: "mind-trace-chart-section mind-trace-themes-card" });
@@ -6248,8 +6403,8 @@ function homeWeekSummary(current, previous) {
 var MIND_TRACE_MODES = [
   { id: "home", label: "主页", icon: "home" },
   { id: "record", label: "记录", icon: "notebook-pen" },
-  { id: "reports", label: "报告", icon: "file-text" },
-  { id: "trajectory", label: "轨迹", icon: "route" }
+  { id: "trajectory", label: "轨迹", icon: "route" },
+  { id: "reports", label: "报告", icon: "file-text" }
 ];
 function collectWeeklyReportFiles(app) {
   const files = [];
@@ -6388,7 +6543,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       cls: "mind-trace-tabpanel",
       attr: {
         role: "tabpanel",
-        "aria-label": mode.label,
+        "aria-labelledby": `mind-trace-tab-${mode.id}`,
         id: `mind-trace-panel-${mode.id}`
       }
     });
@@ -6421,6 +6576,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       const button = items.createEl("button", {
         cls: `mind-trace-nav-item${active ? " is-active" : ""}`,
         attr: {
+          id: `mind-trace-tab-${mode.id}`,
           type: "button",
           role: "tab",
           "aria-selected": String(active),
@@ -6457,12 +6613,6 @@ var JournalView = class extends import_obsidian4.ItemView {
         });
       });
     }
-    const cta = nav.createEl("button", {
-      cls: "mind-trace-nav-cta",
-      text: "开始记录",
-      attr: { type: "button" }
-    });
-    cta.addEventListener("click", () => this.startWizard());
   }
   setMode(mode) {
     if (this.mode === mode) {
@@ -6707,38 +6857,6 @@ var JournalView = class extends import_obsidian4.ItemView {
           await this.plugin.openWeeklyReportFile(status.file.path);
         } else {
           showMindTraceNotice("本周周报暂时无法打开");
-        }
-      }
-    });
-  }
-  regenerateReport(item) {
-    const period = { type: "weekly", start: item.start, end: item.end };
-    openMindTraceOperation(this.app, this.plugin, {
-      eyebrow: "心迹 · 更新周报",
-      title: `更新 ${periodLabel(period)} 的周报？`,
-      description: "会重新读取该周日记、校准图谱事件并覆盖现有周报。",
-      confirm: true,
-      confirmLabel: "更新周报",
-      warning: true,
-      stages: ["读取本周记录", "整理图谱事件", "模型校准事件", "逐篇写回日记", "生成周报内容", "保存周报", "构建图谱数据", "更新周报与图谱"],
-      run: async (update) => {
-        return await this.plugin.generateWeeklyReport(period, true, false, update);
-      },
-      onSuccess: async () => {
-        if (this.mode === "reports" && this.leaf.view === this) {
-          this.render(true);
-        }
-      },
-      successTitle: "周报已更新",
-      successDetail: "该周周报与图谱已经重新生成。",
-      successLabel: "查看周报",
-      backgroundSuccess: "周报已更新",
-      onViewResult: async () => {
-        const status = await this.plugin.weeklyReportStatus(period);
-        if ((status.kind === "ready" || status.kind === "stale") && status.file !== null) {
-          await this.plugin.openWeeklyReportFile(status.file.path);
-        } else {
-          showMindTraceNotice("周报暂时无法打开");
         }
       }
     });
@@ -7550,44 +7668,58 @@ var JournalView = class extends import_obsidian4.ItemView {
       button.addEventListener("click", () => this.retryWeeklyReport(false));
       return;
     }
-    const list = section.createDiv({ cls: "mind-trace-reports-list" });
+    const list = section.createDiv({ cls: "mind-trace-home-rows" });
     for (const item of files) {
-      const card = list.createEl("article", {
-        cls: "mind-trace-report-list-card",
-        attr: { "data-report-path": item.file.path }
+      const row = list.createDiv({
+        cls: "mind-trace-home-row",
+        attr: {
+          role: "button",
+          tabindex: "0",
+          "data-report-path": item.file.path,
+          "aria-label": `打开 ${item.start} 至 ${item.end} 的周报`,
+          title: item.generatedAt.length > 0 ? `${item.start} 至 ${item.end} · ${weeklyGeneratedAtText(item.generatedAt)}` : `${item.start} 至 ${item.end}`
+        }
       });
-      const meta = card.createDiv({ cls: "mind-trace-report-list-meta" });
-      meta.createSpan({ cls: "mind-trace-report-list-period", text: `${item.start} 至 ${item.end}` });
-      if (item.generatedAt.length > 0) {
-        meta.createSpan({ cls: "mind-trace-report-list-generated", text: weeklyGeneratedAtText(item.generatedAt) });
-      }
+      const rail = row.createDiv({
+        cls: "mind-trace-home-rail",
+        attr: { "aria-hidden": "true" }
+      });
+      rail.createSpan({ cls: "mind-trace-home-dot mind-trace-report-dot" });
+      const main = row.createDiv({ cls: "mind-trace-home-row-main" });
+      const period = main.createSpan({ cls: "mind-trace-home-date" });
+      period.createSpan({ cls: "mind-trace-home-date-day", text: `${item.start.slice(5)}–${item.end.slice(5)}` });
+      period.createSpan({ cls: "mind-trace-home-date-week", text: "周报" });
       if (item.end === completedPeriod("weekly").end) {
-        meta.createSpan({ cls: "mind-trace-report-badge", text: "最近一周" });
+        main.createSpan({ cls: "mind-trace-report-badge", text: "最近一周" });
       }
-      const body = card.createDiv({ cls: "mind-trace-report-list-body" });
-      body.createEl("p", { cls: "mind-trace-report-list-summary", text: "正在读取摘要…" });
-      const stats = card.createDiv({ cls: "mind-trace-report-list-stats" });
-      stats.createSpan({ text: `${item.days} 个记录日` });
-      stats.createSpan({ text: `${item.sessions} 篇记录` });
-      const actions = card.createDiv({ cls: "mind-trace-report-list-actions" });
-      const open = actions.createEl("button", {
-        cls: "mod-cta",
-        text: "打开",
-        attr: { type: "button", "aria-label": `打开 ${item.start} 至 ${item.end} 的周报` }
+      main.createSpan({
+        cls: "mind-trace-report-row-summary mind-trace-report-list-summary",
+        text: "正在读取摘要…"
       });
-      open.addEventListener("click", () => void this.openWeeklyReportFile(item.file.path));
-      const update = actions.createEl("button", {
-        text: "更新",
-        attr: { type: "button", "aria-label": `更新 ${item.start} 至 ${item.end} 的周报` }
+      main.createSpan({
+        cls: "mind-trace-home-sessions",
+        text: `${item.days} 天 · ${item.sessions} 篇`
       });
-      update.addEventListener("click", () => this.regenerateReport(item));
+      main.createSpan({
+        cls: "mind-trace-home-row-arrow",
+        text: "→",
+        attr: { "aria-hidden": "true" }
+      });
+      const open = () => void this.openWeeklyReportFile(item.file.path);
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      });
     }
     void this.loadReportListSummaries(list, files);
   }
   async loadReportListSummaries(list, files) {
     for (const item of files) {
-      const card = [...list.querySelectorAll(".mind-trace-report-list-card")].find((candidate) => candidate.getAttribute("data-report-path") === item.file.path);
-      const summary = card?.querySelector(".mind-trace-report-list-summary");
+      const row = [...list.querySelectorAll(".mind-trace-home-row")].find((candidate) => candidate.getAttribute("data-report-path") === item.file.path);
+      const summary = row?.querySelector(".mind-trace-report-list-summary");
       if (!(summary instanceof HTMLElement) || !summary.isConnected) {
         continue;
       }
@@ -7642,7 +7774,7 @@ var JournalView = class extends import_obsidian4.ItemView {
         }
       }
     );
-    calendar.renderCalendar(entries, calendarContainer);
+    calendar.renderYearHeatmap(entries, calendarContainer);
     this.renderHomeList(shell);
     this.renderHistoryCenter(shell);
     void this.loadAndRenderHistory();
