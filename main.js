@@ -646,7 +646,7 @@ function trendBandPaths(selfPoints, aiPoints) {
   if (run.length > 0) {
     runs.push(run);
   }
-  return runs.map((points) => {
+  return runs.filter((points) => points.length >= 2).map((points) => {
     const forward = points.map((point) => `${point.self.x.toFixed(1)} ${point.self.y.toFixed(1)}`).join(" L ");
     const backward = [...points].reverse().map((point) => `${point.ai.x.toFixed(1)} ${point.ai.y.toFixed(1)}`).join(" L ");
     return `M ${forward} L ${backward} Z`;
@@ -685,6 +685,27 @@ function renderLineChart(container, entries, range, onSelectRange = null, previo
   const grid = section.createDiv({ cls: "mind-trace-trend-grid" });
   for (const [key, label] of [["mood", "心情"], ["energy", "精力"], ["stress", "压力"]]) {
     renderTrendMini(grid, key, label, entries, range, currentStats, previousStats, aiSeries);
+  }
+  const recordedDates = [...new Set((Array.isArray(entries) ? entries : []).map((entry) => typeof entry?.date === "string" ? entry.date : "").filter((date) => date.length > 0))].sort();
+  const aiDates = [...new Set((Array.isArray(aiSeries) ? aiSeries : []).filter((item) => {
+    if (item === null || typeof item !== "object" || typeof item.date !== "string") return false;
+    return ["mood", "energy", "stress"].some((key) => Number.isFinite(Number(item.ai?.[key])));
+  }).map((item) => item.date))].sort();
+  const trendFoot = section.createDiv({ cls: "mind-trace-trend-foot", attr: { role: "status", "aria-live": "polite" } });
+  if (recordedDates.length === 0 && aiDates.length === 0) {
+    trendFoot.createSpan({ cls: "mind-trace-trend-foot-empty", text: `所选 ${range} 天暂无记录` });
+  } else {
+    const footItem = (label, value, modifier = "") => {
+      const item = trendFoot.createSpan({ cls: `mind-trace-trend-foot-item${modifier.length > 0 ? ` ${modifier}` : ""}` });
+      item.createSpan({ cls: "mind-trace-trend-foot-label", text: label });
+      item.createEl("strong", { text: value });
+    };
+    footItem("记录日", `${recordedDates.length} 天`);
+    footItem("AI 覆盖", `${aiDates.length} 天`, aiDates.length === 0 ? "is-empty" : "");
+    if (recordedDates.length > 0) {
+      const latest = recordedDates[recordedDates.length - 1];
+      footItem("最近记录", latest.slice(5).replace("-", "/"));
+    }
   }
   return section;
 }
@@ -765,35 +786,27 @@ function renderTrendMini(container, key, label, entries, range, currentStats, pr
   const selfPoints = trendPoints(entries, key, range, left, top, plotWidth, plotHeight);
   const aiEntries = Array.isArray(aiSeries) ? aiSeries.filter((item) => item !== null && typeof item === "object" && item.ai !== null && typeof item.ai[key] === "number" && Number.isFinite(item.ai[key])).map((item) => ({ date: item.date, [key]: item.ai[key] })) : [];
   const aiPoints = trendPoints(aiEntries, key, range, left, top, plotWidth, plotHeight);
+  const bandPaths = trendBandPaths(selfPoints, aiPoints);
   const aiCoverageDays = new Set(aiPoints.map((point) => point.date)).size;
   if (aiCoverageDays > 0) {
     legend.createSpan({ cls: "mind-trace-trend-legend-coverage", text: `${aiCoverageDays} 天` });
   } else {
     legend.createSpan({ cls: "mind-trace-trend-legend-coverage is-empty", text: "暂无" });
   }
-  const baseline = top + plotHeight + 8;
-  if (aiPoints.length === 0) {
-    for (const segment of lineSegments(entries, key, range, plotWidth, plotHeight, left, top)) {
-      const firstX = /^M ([\d.]+)/.exec(segment)?.[1];
-      const lastX = /([\d.]+) [\d.]+$/.exec(segment)?.[1];
-      if (firstX !== void 0 && lastX !== void 0) {
-        svg.append(
-          svgElement("path", {
-            d: `${segment} L ${lastX} ${baseline} L ${firstX} ${baseline} Z`,
-            class: `mind-trace-area-${key}`
-          })
-        );
-      }
-    }
-  } else {
-    for (const band of trendBandPaths(selfPoints, aiPoints)) {
-      svg.append(
-        svgElement("path", {
-          d: band,
-          class: `mind-trace-band-${key}`
-        })
-      );
-    }
+  if (bandPaths.length > 0) {
+    const bandLegend = legend.createSpan({ cls: "mind-trace-trend-legend-item mind-trace-trend-legend-band" });
+    bandLegend.createSpan({ cls: "mind-trace-trend-legend-line is-band", attr: { "aria-hidden": "true" } });
+    bandLegend.appendText("自评–AI 差值");
+    svg.setAttribute("aria-label", `${range} 天${label}趋势，评分范围 1 到 5；阴影表示同一日期自评与 AI 的差值`);
+  }
+  for (const band of bandPaths) {
+    svg.append(
+      svgElement("path", {
+        d: band,
+        class: `mind-trace-band-${key}`,
+        "aria-hidden": "true"
+      })
+    );
   }
   for (const segment of lineSegments(entries, key, range, plotWidth, plotHeight, left, top)) {
     svg.append(
@@ -819,7 +832,6 @@ function renderTrendMini(container, key, label, entries, range, currentStats, pr
       cy: point.y.toFixed(1),
       r: "3",
       class: `mind-trace-point mind-trace-series-${key}`,
-      tabindex: "0",
       role: "img",
       "aria-label": `${point.date} ${label} 自评 ${point.value.toFixed(1)}`
     });
@@ -834,7 +846,6 @@ function renderTrendMini(container, key, label, entries, range, currentStats, pr
       cy: point.y.toFixed(1),
       r: "2.5",
       class: `mind-trace-point mind-trace-point-ai mind-trace-series-${key}`,
-      tabindex: "0",
       role: "img",
       "aria-label": `${point.date} ${label} AI ${point.value.toFixed(1)}`
     });
@@ -1014,18 +1025,18 @@ var DashboardComponent = class {
     const nav = heading.createDiv({ cls: "mind-trace-cal-nav" });
     const previous = nav.createEl("button", {
       cls: "clickable-icon mind-trace-cal-nav-button",
-      text: "‹",
       attr: { type: "button", "aria-label": "上一个月" }
     });
+    (0, import_obsidian4.setIcon)(previous, "chevron-left");
     nav.createSpan({
       cls: "mind-trace-cal-month",
       text: `${this.calendarCursor.getFullYear()}年${this.calendarCursor.getMonth() + 1}月`
     });
     const next = nav.createEl("button", {
       cls: "clickable-icon mind-trace-cal-nav-button",
-      text: "›",
       attr: { type: "button", "aria-label": "下一个月" }
     });
+    (0, import_obsidian4.setIcon)(next, "chevron-right");
     previous.addEventListener("click", () => {
       this.shiftCalendar(-1);
     });
@@ -1093,6 +1104,41 @@ var DashboardComponent = class {
         });
       }
     }
+    const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const recordedDates = [...moodByDate.keys()].filter((date) => date.startsWith(`${monthPrefix}-`)).sort();
+    const recordedMoods = recordedDates.map((date) => moodByDate.get(date)).filter((mood) => typeof mood === "number" && Number.isFinite(mood));
+    const evidence = section.createDiv({ cls: "mind-trace-calendar-evidence", attr: { "aria-label": `${year}年${month + 1}月记录证据` } });
+    const evidenceHeading = evidence.createDiv({ cls: "mind-trace-calendar-evidence-head" });
+    evidenceHeading.createSpan({ cls: "mind-trace-calendar-evidence-title", text: "本月落点" });
+    evidenceHeading.createSpan({ cls: "mind-trace-calendar-evidence-total", text: `${recordedDates.length} / ${daysInMonth} 天` });
+    const evidenceStrip = evidence.createDiv({ cls: "mind-trace-calendar-evidence-strip", attr: { role: "list", "aria-label": "本月每日记录" } });
+    const recordedDateSet = new Set(recordedDates);
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const dateString = localDateString(new Date(year, month, day));
+      const mood = moodByDate.get(dateString);
+      const moodLabel = typeof mood === "number" && Number.isFinite(mood) ? `心情 ${mood.toFixed(1)}/5` : "无记录";
+      const evidenceDay = evidenceStrip.createSpan({
+        cls: `mind-trace-calendar-evidence-day${recordedDateSet.has(dateString) ? "" : " is-empty"}`,
+        attr: {
+          role: "listitem",
+          title: `${dateString} · ${moodLabel}`,
+          "aria-label": `${dateString}，${moodLabel}`
+        }
+      });
+      if (typeof mood === "number" && Number.isFinite(mood)) {
+        evidenceDay.addClass(`mind-trace-cal-day-${Math.min(5, Math.max(1, Math.round(mood)))}`);
+      }
+    }
+    const evidenceMeta = evidence.createDiv({ cls: "mind-trace-calendar-evidence-meta" });
+    const averageItem = evidenceMeta.createSpan({ cls: "mind-trace-calendar-evidence-meta-item" });
+    averageItem.createSpan({ text: "平均心情" });
+    averageItem.createEl("strong", { text: recordedMoods.length > 0 ? average(recordedMoods).toFixed(1) : "—" });
+    const recentItem = evidenceMeta.createSpan({ cls: "mind-trace-calendar-evidence-meta-item" });
+    recentItem.createSpan({ text: "最近记录" });
+    recentItem.createEl("strong", { text: recordedDates.length > 0 ? recordedDates[recordedDates.length - 1].slice(5).replace("-", "/") : "—" });
+    if (recordedDates.length === 0) {
+      evidence.createEl("p", { cls: "mind-trace-calendar-evidence-empty", text: "这个月还没有落点。" });
+    }
   }
   shiftCalendar(offset) {
     this.calendarCursor = new Date(
@@ -1124,18 +1170,18 @@ var DashboardComponent = class {
     const nav = heading.createDiv({ cls: "mind-trace-heatmap-nav" });
     const previous = nav.createEl("button", {
       cls: "clickable-icon mind-trace-heatmap-nav-button",
-      text: "‹",
       attr: { type: "button", "aria-label": "上一年" }
     });
+    (0, import_obsidian4.setIcon)(previous, "chevron-left");
     nav.createSpan({
       cls: "mind-trace-heatmap-year",
       text: `${this.heatmapYear}年`
     });
     const next = nav.createEl("button", {
       cls: "clickable-icon mind-trace-heatmap-nav-button",
-      text: "›",
       attr: { type: "button", "aria-label": "下一年" }
     });
+    (0, import_obsidian4.setIcon)(next, "chevron-right");
     previous.addEventListener("click", () => {
       this.shiftHeatmapYear(-1);
     });
@@ -1168,10 +1214,17 @@ var DashboardComponent = class {
     const daysInYear = leap ? 366 : 365;
     const weeks = Math.ceil((firstWeekday + daysInYear) / 7);
     const wrap = section.createDiv({ cls: "mind-trace-heatmap-wrap" });
+    // Keep the annual grid legible on desktop while allowing the wrap to
+    // scroll horizontally on narrow panes.  The cell size is also written
+    // into the grid tracks below, so cells remain square instead of
+    // stretching with the available width.
+    const heatCellSize = 16;
+    const heatLabelWidth = 26;
+    const heatGridGap = 3;
     const grid = wrap.createDiv({
       cls: "mind-trace-heatmap",
       attr: {
-        style: `grid-template-columns: 22px repeat(${weeks}, minmax(9px, 1fr)); grid-template-rows: repeat(8, 16px);`
+        style: `--mind-trace-heat-cell-size: ${heatCellSize}px; --mind-trace-heat-label-width: ${heatLabelWidth}px; grid-template-columns: ${heatLabelWidth}px repeat(${weeks}, ${heatCellSize}px); grid-template-rows: repeat(8, ${heatCellSize}px); min-width: ${heatLabelWidth + weeks * heatCellSize + weeks * heatGridGap}px;`
       }
     });
     for (const [weekday, row] of [["一", 2], ["三", 4], ["五", 6]]) {
@@ -1221,14 +1274,15 @@ var DashboardComponent = class {
         }
         const weekIndex = Math.floor((dayCursor - 1 + firstWeekday) / 7);
         const weekday = (firstWeekday + dayCursor - 1) % 7;
-        const cellTitle = filePath !== void 0 ? `${dateString} 心情 ${mood.toFixed(1)}` : isToday ? `${dateString} · 开始今天的心迹记录` : dateString;
+        const moodLabel = mood !== void 0 ? `心情 ${mood.toFixed(1)}/5` : "无记录";
+        const cellTitle = filePath !== void 0 ? `${dateString} ${moodLabel}` : isToday ? `${dateString} · ${moodLabel} · 开始今天的心迹记录` : `${dateString} · ${moodLabel}`;
         const cellStyle = `grid-column: ${weekIndex + 2}; grid-row: ${weekday + 2};`;
         const cell = grid.createSpan({
           cls: classes.join(" "),
           attr: openable ? {
             role: "button",
             tabindex: "0",
-            "aria-label": filePath !== void 0 ? `打开 ${dateString} 的日记` : `开始 ${dateString} 的心迹记录`,
+            "aria-label": filePath !== void 0 ? `打开 ${dateString} 的日记，${moodLabel}` : `开始 ${dateString} 的心迹记录，${moodLabel}`,
             title: cellTitle,
             style: cellStyle
           } : {
@@ -1289,7 +1343,7 @@ var DashboardComponent = class {
       attr: { role: "heading", "aria-level": "3" }
     });
     heading.createEl("p", { text: "来自所选周期，按时间倒序。" });
-    this.eventsContainer = section.createDiv();
+    this.eventsContainer = section.createDiv({ cls: "mind-trace-events-list" });
     this.eventsContainer.createEl("p", {
       cls: "mind-trace-empty",
       text: "正在整理最近事件…"
@@ -1326,6 +1380,9 @@ var DashboardComponent = class {
       }
     }
     if (this.eventsContainer !== null && this.eventsContainer.isConnected) {
+      this.eventsContainer.classList.remove("is-sparse", "is-balanced", "is-dense");
+      const eventCount = Array.isArray(insights.recentEvents) ? insights.recentEvents.length : 0;
+      this.eventsContainer.classList.add(eventCount <= 5 ? "is-sparse" : eventCount <= 11 ? "is-balanced" : "is-dense");
       this.eventsContainer.empty();
       if (insights.recentEvents.length === 0) {
         this.eventsContainer.createEl("p", {
@@ -1345,6 +1402,7 @@ var DashboardComponent = class {
           row.createSpan({ cls: "mind-trace-event-meta", text: `${event.date.slice(5).replace("-", "/")} ${event.time}` });
           row.createSpan({ cls: "mind-trace-event-type", text: event.type });
           row.createSpan({ cls: "mind-trace-event-title", text: event.title });
+          (0, import_obsidian4.setIcon)(row.createSpan({ cls: "mind-trace-event-row-icon", attr: { "aria-hidden": "true" } }), "arrow-right");
           if (this.onOpenEvent !== null) {
             row.addEventListener("click", () => this.onOpenEvent(event));
           }
@@ -1435,19 +1493,27 @@ var DEFAULT_SETTINGS = {
   },
   coreQuestions: [...CORE_QUESTIONS],
   adaptiveQuestionLimit: DEFAULT_ADAPTIVE_QUESTION_LIMIT,
-  questionLayout: "cards",
   journalFolder: "心迹日记",
   historyDays: 7,
   reflectionTone: "gentle",
   customInstructions: "",
   dashboardRange: 30,
+  weeklyReportFolder: "",
   weeklyReportAutoGenerate: true,
   weeklyReportMinimumDays: 4,
   weeklyEventLimit: 50,
   weeklyGraphEventLimit: 20,
+  monthlyReportFolder: "",
   monthlyReportAutoGenerate: true,
   monthlyReportMinimumWeeks: 4,
   monthlyGraphEventLimit: 100,
+  selfObservation: {
+    version: 1,
+    generatedAt: "",
+    sources: [],
+    analysis: null,
+    feedback: {}
+  },
   security: {
     version: 1,
     salt: "",
@@ -1456,6 +1522,86 @@ var DEFAULT_SETTINGS = {
     enabled: true
   }
 };
+function emptySelfObservation() {
+  return {
+    version: 1,
+    generatedAt: "",
+    sources: [],
+    maturity: null,
+    analysis: null,
+    feedback: {}
+  };
+}
+function normalizeSelfObservation(value) {
+  const empty = emptySelfObservation();
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return empty;
+  }
+  const generatedAt = typeof value.generatedAt === "string" && !Number.isNaN(new Date(value.generatedAt).getTime()) ? value.generatedAt : "";
+  const sources = Array.isArray(value.sources) ? value.sources.map((source) => {
+    if (typeof source !== "object" || source === null || Array.isArray(source)) {
+      return null;
+    }
+    const type = source.type === "monthly" ? "monthly" : source.type === "weekly" ? "weekly" : "";
+    const periodStart = typeof source.periodStart === "string" ? source.periodStart : "";
+    const periodEnd = typeof source.periodEnd === "string" ? source.periodEnd : "";
+    const filePath = typeof source.filePath === "string" ? source.filePath : "";
+    if (type.length === 0 || periodStart.length === 0 || periodEnd.length === 0 || filePath.length === 0) {
+      return null;
+    }
+    return {
+      type,
+      periodStart,
+      periodEnd,
+      filePath,
+      generatedAt: typeof source.generatedAt === "string" ? source.generatedAt : "",
+      periodStatus: source.periodStatus === "partial" ? "partial" : "complete"
+    };
+  }).filter((source) => source !== null).slice(0, 11) : [];
+  const analysis = normalizeObservationAnalysis(value.analysis);
+  if (analysis !== null && [...analysis.changes, ...analysis.perspectives, ...analysis.hypotheses, ...analysis.roles].some((item) => item.evidenceDates.length === 0)) {
+    return empty;
+  }
+  const feedback = {};
+  if (typeof value.feedback === "object" && value.feedback !== null && !Array.isArray(value.feedback)) {
+    for (const [key, item] of Object.entries(value.feedback).slice(0, 120)) {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        continue;
+      }
+      if (!["confirmed", "rejected", "pending"].includes(item.status)) {
+        continue;
+      }
+      const status = item.status;
+      feedback[key] = {
+        status,
+        correction: typeof item.correction === "string" ? item.correction.slice(0, 800) : "",
+        updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : ""
+      };
+    }
+  }
+  return {
+    version: 1,
+    generatedAt,
+    sources,
+    maturity: value.maturity && typeof value.maturity === "object" && ["initial", "cross_period", "continuous"].includes(value.maturity.stage) ? {
+      stage: value.maturity.stage,
+      eligibleReportCount: Number(value.maturity.eligibleReportCount) || 0,
+      independentPeriodCount: Number(value.maturity.independentPeriodCount) || 0,
+      uniqueEvidenceDateCount: Number(value.maturity.uniqueEvidenceDateCount) || 0,
+      allUniqueEvidenceDateCount: Number(value.maturity.allUniqueEvidenceDateCount ?? value.maturity.uniqueEvidenceDateCount) || 0,
+      evidenceSpanDays: Number(value.maturity.evidenceSpanDays) || 0,
+      remaining: {
+        crossPeriodPeriods: Number(value.maturity.remaining?.crossPeriodPeriods) || 0,
+        crossPeriodEvidenceDates: Number(value.maturity.remaining?.crossPeriodEvidenceDates) || 0,
+        continuousPeriods: Number(value.maturity.remaining?.continuousPeriods) || 0,
+        continuousEvidenceDates: Number(value.maturity.remaining?.continuousEvidenceDates) || 0,
+        continuousSpanDays: Number(value.maturity.remaining?.continuousSpanDays) || 0
+      }
+    } : null,
+    analysis,
+    feedback
+  };
+}
 function configuredCoreQuestions(settings) {
   if (!Array.isArray(settings.coreQuestions) || settings.coreQuestions.length === 0) {
     return [...CORE_QUESTIONS];
@@ -1468,9 +1614,6 @@ function configuredAdaptiveQuestionLimit(settings) {
     return DEFAULT_ADAPTIVE_QUESTION_LIMIT;
   }
   return limit;
-}
-function configuredQuestionLayout(settings) {
-  return settings.questionLayout === "timeline" ? "timeline" : "cards";
 }
 function draftCoreQuestions(draft) {
   if (!Array.isArray(draft.coreQuestions) || draft.coreQuestions.length === 0) {
@@ -1837,6 +1980,8 @@ function llmOperationLabel(operation) {
       return "生成周报";
     case "monthly-report":
       return "生成月报";
+    case "observation":
+      return "生成观照";
     case "event-backfill":
       return "校准本周事件";
     case "test":
@@ -1982,6 +2127,53 @@ var MindTraceConfirmModal = class extends import_obsidian7.Modal {
       this.onStart?.();
     });
     window.requestAnimationFrame(() => confirm.focus({ preventScroll: true }));
+  }
+};
+var ObservationFeedbackModal = class extends import_obsidian7.Modal {
+  constructor(app, plugin, item, feedback, onSave) {
+    super(app);
+    this.plugin = plugin;
+    this.item = item;
+    this.feedback = feedback ?? { status: "pending", correction: "" };
+    this.onSave = onSave;
+  }
+  onOpen() {
+    this.modalEl.addClass("mind-trace-observation-feedback-modal", "mind-trace-dialog-shell");
+    this.contentEl.addClass("mind-trace-observation-feedback-content");
+    this.render();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+  render() {
+    this.contentEl.empty();
+    this.contentEl.createDiv({ cls: "mind-trace-dialog-eyebrow", text: "观照 · 校准" });
+    this.contentEl.createDiv({ cls: "mind-trace-dialog-title", text: "这条观察像你吗？" });
+    this.contentEl.createEl("p", { cls: "mind-trace-dialog-body", text: this.item?.text ?? "你可以保留、确认或否认这条观察。" });
+    const choices = this.contentEl.createDiv({ cls: "mind-trace-observation-feedback-choices", attr: { role: "radiogroup", "aria-label": "观照校准状态" } });
+    const choiceLabels = [["confirmed", "像我 / 符合"], ["rejected", "不符合"], ["pending", "先保留"]];
+    for (const [value, label] of choiceLabels) {
+      const button = choices.createEl("button", { cls: `mind-trace-observation-feedback-choice${this.feedback.status === value ? " is-selected" : ""}`, text: label, attr: { type: "button", role: "radio", "aria-checked": String(this.feedback.status === value) } });
+      button.addEventListener("click", () => {
+        this.feedback.status = value;
+        for (const candidate of choices.querySelectorAll("button")) {
+          candidate.classList.toggle("is-selected", candidate === button);
+          candidate.setAttribute("aria-checked", String(candidate === button));
+        }
+      });
+    }
+    const correction = this.contentEl.createEl("textarea", { attr: { rows: "3", placeholder: "可选：写下你的修正或补充" } });
+    correction.value = this.feedback.correction ?? "";
+    const actions = this.contentEl.createDiv({ cls: "mind-trace-actions mind-trace-dialog-actions" });
+    const cancel = actions.createEl("button", { text: "取消", attr: { type: "button" } });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", { cls: "mod-cta", text: "保存校准", attr: { type: "button" } });
+    save.addEventListener("click", () => {
+      save.disabled = true;
+      this.onSave?.({ status: this.feedback.status, correction: correction.value.trim() });
+      this.close();
+    });
+    window.requestAnimationFrame(() => save.focus({ preventScroll: true }));
   }
 };
 var MindTraceTaskToast = class {
@@ -2391,12 +2583,63 @@ var EVENT_TYPE_LABELS = {
   obstacle: "受阻",
   change: "变化",
   experience: "经历",
+  intention: "意向",
+  open_loop: "未决",
   other: "其他"
 };
 var EVENT_TYPE_LABEL_VALUES = Object.fromEntries(
   Object.entries(EVENT_TYPE_LABELS).map(([type, label]) => [label, type])
 );
 var EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);
+var EVENT_SCHEMA_VERSION = 4;
+var EVENT_STATUS_LABELS = {
+  occurred: "已发生",
+  ongoing: "进行中",
+  planned: "计划中",
+  blocked: "受阻",
+  resolved: "已收尾",
+  uncertain: "待确认"
+};
+var EVENT_STATUS_LABEL_VALUES = Object.fromEntries(
+  Object.entries(EVENT_STATUS_LABELS).map(([status, label]) => [label, status])
+);
+var EVENT_STATUSES = Object.keys(EVENT_STATUS_LABELS);
+var EVENT_TRACE_KIND_LABELS = {
+  fact: "事实",
+  emotion: "情绪",
+  body: "身体感受",
+  thought: "想法",
+  judgment: "判断",
+  intention: "意图",
+  goal: "目标",
+  outcome: "结果",
+  open_loop: "未决事项"
+};
+var EVENT_TRACE_KIND_LABEL_VALUES = Object.fromEntries(
+  Object.entries(EVENT_TRACE_KIND_LABELS).map(([kind, label]) => [label, kind])
+);
+var EVENT_TRACE_KINDS = Object.keys(EVENT_TRACE_KIND_LABELS);
+var EVENT_TRACE_LAYER_LABELS = {
+  fact: "明确事实",
+  self_report: "主观自述",
+  direction: "目标/未决"
+};
+var EVENT_TRACE_CERTAINTY_LABELS = {
+  stated: "明确表达",
+  uncertain: "带有不确定"
+};
+var EVENT_TRACE_CERTAINTIES = Object.keys(EVENT_TRACE_CERTAINTY_LABELS);
+var EVENT_TRACE_KIND_LAYERS = {
+  fact: "fact",
+  emotion: "self_report",
+  body: "self_report",
+  thought: "self_report",
+  judgment: "self_report",
+  intention: "direction",
+  goal: "direction",
+  outcome: "fact",
+  open_loop: "direction"
+};
 var EVENT_KIND_LABELS = {
   person: "人物",
   group: "群体",
@@ -2448,6 +2691,7 @@ var MAX_SESSION_EVENTS = 20;
 var MAX_EVENT_ARGUMENTS = 16;
 var MAX_EVENT_ELEMENTS = MAX_EVENT_ARGUMENTS;
 var MAX_EVENT_RELATIONS = 12;
+var MAX_EVENT_TRACES = 12;
 function normalizeEventElementName(value) {
   return String(value ?? "").normalize("NFKC").replace(/^[\s,，、;；:：.。]+|[\s,，、;；:：.。]+$/g, "").replace(/\s+/g, " ").toLocaleLowerCase();
 }
@@ -2476,9 +2720,22 @@ function normalizeEventRelation(relation) {
     object: normalizeEventEntity(relation?.object)
   };
 }
+function normalizeEventTrace(trace) {
+  const kind = EVENT_TRACE_KINDS.includes(trace?.kind) ? trace.kind : "fact";
+  const layer = EVENT_TRACE_KIND_LAYERS[kind];
+  const certainty = EVENT_TRACE_CERTAINTIES.includes(trace?.certainty) ? trace.certainty : "stated";
+  return {
+    kind,
+    layer,
+    certainty,
+    text: String(trace?.text ?? "").trim(),
+    evidence: String(trace?.evidence ?? "").trim()
+  };
+}
 function normalizeEvent(event) {
   const id = typeof event?.id === "string" ? event.id.trim() : "";
   const type = EVENT_TYPES.includes(event?.type) ? event.type : "other";
+  const status = EVENT_STATUSES.includes(event?.status) ? event.status : "occurred";
   const title = String(event?.title ?? "").trim();
   const summary = String(event?.summary ?? "").trim();
   const arguments2 = [];
@@ -2507,8 +2764,19 @@ function normalizeEvent(event) {
     seenRelations.add(key);
     relations.push({ ...relation, subject: entityMap.get(subjectKey), object: entityMap.get(objectKey) });
   }
+  const traces = [];
+  const seenTraces = /* @__PURE__ */ new Set();
+  for (const raw of Array.isArray(event?.traces) ? event.traces : []) {
+    const trace = normalizeEventTrace(raw);
+    const key = `${trace.kind}:${trace.certainty}:${normalizeEventElementName(trace.text)}:${normalizeEventElementName(trace.evidence)}`;
+    if (normalizeEventElementName(trace.text).length === 0 || seenTraces.has(key)) {
+      continue;
+    }
+    seenTraces.add(key);
+    traces.push(trace);
+  }
   const elements = [...new Map(arguments2.map((argument) => [eventEntityKey(argument.entity), argument.entity])).values()];
-  return { id, type, title, summary, arguments: arguments2, relations, elements };
+  return { id, type, status, title, summary, traces, arguments: arguments2, relations, elements };
 }
 function validateEvents(events, allowEmpty = true) {
   if (!Array.isArray(events) || events.length > MAX_SESSION_EVENTS || !allowEmpty && events.length === 0) {
@@ -2518,6 +2786,10 @@ function validateEvents(events, allowEmpty = true) {
     const event = normalizeEvent(raw);
     const rawArgumentCount = Array.isArray(raw?.arguments) ? raw.arguments.length : Array.isArray(raw?.elements) ? raw.elements.length : 0;
     const rawRelationCount = Array.isArray(raw?.relations) ? raw.relations.length : 0;
+    const rawTraceCount = Array.isArray(raw?.traces) ? raw.traces.length : 0;
+    if (!EVENT_STATUSES.includes(raw?.status)) {
+      throw new Error(`事件 ${index + 1} 缺少合法的进展状态`);
+    }
     if (event.title.length === 0 || event.title.length > 60) {
       throw new Error(`事件 ${index + 1} 的标题需要为 1–60 个字符`);
     }
@@ -2538,6 +2810,18 @@ function validateEvents(events, allowEmpty = true) {
     }
     if (event.relations.length !== rawRelationCount) {
       throw new Error(`事件 ${index + 1} 的关系端点必须是该事件中两个不同的论元`);
+    }
+    if (event.traces.length > MAX_EVENT_TRACES) {
+      throw new Error(`事件 ${index + 1} 最多保留 ${MAX_EVENT_TRACES} 条体验与方向线索`);
+    }
+    if (Array.isArray(raw?.traces) && event.traces.length !== rawTraceCount) {
+      throw new Error(`事件 ${index + 1} 存在空白或重复的体验与方向线索`);
+    }
+    if (Array.isArray(raw?.traces) && raw.traces.some((trace) => !EVENT_TRACE_KINDS.includes(trace?.kind) || trace?.layer !== EVENT_TRACE_KIND_LAYERS[trace?.kind] || !EVENT_TRACE_CERTAINTIES.includes(trace?.certainty))) {
+      throw new Error(`事件 ${index + 1} 的线索类型、信息层或确定性不匹配`);
+    }
+    if (event.traces.some((trace) => trace.text.length > 160 || trace.evidence.length > 160)) {
+      throw new Error(`事件 ${index + 1} 的线索正文与依据不能超过 160 个字符`);
     }
     return event;
   });
@@ -2591,11 +2875,21 @@ ${history}` : "";
         "片段有自然时间顺序时按时间推进，否则用轻微过渡连接；不同片段之间允许保留情绪反差。",
         "正文通常写成 250–600 个中文字符；信息较少时忠实简写，不为凑长度添加内容。",
         "从当天实际内容中动态提取 2–6 个互不重复的智能切片，每个切片包含一个简短类别和一句事实性总结；例如工作、人际、生活、情绪、学习或未解决，但不要输出没有内容的类别。",
-        "同时尽量完整提取当天明确发生的互动、决定、行动、进展、受阻、变化和具体经历为 events；纯情绪、抽象洞察或近期日记中的旧事不能单独作为今天的事件。没有明确事件时返回空数组。",
-        "每个事件包含 type、简短 title、事实性 summary、1–16 个 arguments，以及 0–12 个 relations。type 只能是 interaction、decision、action、progress、obstacle、change、experience、other。",
+        "同时尽量完整提取当天明确发生的互动、决定、行动、进展、受阻、变化和具体经历，以及用户明确表达的意向与未决事项为 events。近期日记中的旧事不能写成今天的事件；没有当天内容时返回空数组。",
+        "抽取粒度以可独立核对的生活片段为准。时间、参与者、动作、决定、障碍、结果或未决事项任一明显不同，通常应拆成不同事件；只有拆开会失去原意时才合并。不得把一天里的多件具体事情压缩成一个宽泛主题或笼统总结。",
+        "title 要指出具体动作或变化；summary 尽量保留谁在什么情境下对什么对象做了什么，以及明确结果或当前进展。保留正文中的人物称呼、项目、产品、地点、工具和具体对象，不用“处理了一些事情”“有所进展”等抽象措辞替代已有细节。",
+        "只有情绪、身体感受或想法而没有外部事件时，只在用户今天明确表达且对保留当下体验有意义时建立 experience 事件，并把“我”作为论元；不得为它补造原因。抽象洞察、人格判断和模型推测不能进入 events。",
+        "每个事件包含 type、status、简短 title、事实性 summary、0–12 个 traces、1–16 个 arguments，以及 0–12 个 relations。type 只能是 interaction、decision、action、progress、obstacle、change、experience、intention、open_loop、other。",
+        "status 只能是 occurred、ongoing、planned、blocked、resolved、uncertain，且只能依据用户明确描述的进展；不得自行判断事情已完成。旧事的后续只有在今天被明确提及时才能作为今天的进展或未决线索。",
+        "trace 只保存用户今天明确表达、与该事件直接相关且值得回看的内容，包含 kind、layer、certainty、text、evidence。kind 只能是 fact、emotion、body、thought、judgment、intention、goal、outcome、open_loop；普通事件事实无需在 trace 中重复。",
+        "trace.layer 必须按内容固定：fact/outcome 为 fact，emotion/body/thought/judgment 为 self_report，intention/goal/open_loop 为 direction。certainty 只能是 stated 或 uncertain；用户使用“可能、好像、还不确定”等措辞时用 uncertain。evidence 使用本次问答中的短原话，不得引用近期记录或生成后的日记措辞。",
+        "trace.text 必须保留体验或方向的主体；第一人称内容写清“我”。他人的情绪、想法和意图只有在用户明确转述其原话或可观察表达时才能记录，不得声称知道他人的内心。",
         "argument 包含 role、label 和 entity；role 只能是 actor、participant、counterparty、recipient、target、object、context、location、cause、outcome、related；entity.kind 只能是 person、group、organization、project、product、place、activity、object、topic。",
         "日记叙述者本人必须使用 person 实体“我”，不得命名为“用户”。若内容讨论产品或服务的用户，应提取为带有具体名称的 group 实体，例如“插件用户”。",
         "只要正文明确支持，就完整保留人物、群体、组织、项目、产品、地点、活动、工具、对象、原因和结果。不要因为某个事件只有一个论元而删除它，也不要为了产生连线虚构论元。",
+        "根据本次问答和近期记录中的类型、称呼、角色、所属组织/项目、共同参与者、明确关系及相邻事件完成实体消歧。简称、全称、代称或不同写法只有在这些上下文一致且能唯一对应时，才统一为近期记录中更具体、稳定的名称；不能只凭字面相似合并。",
+        "同名实体若类型不同必须分开；类型相同但角色、组织/项目、关系或参与事件明显冲突时也不得合并，使用正文能够支持的最短限定名称区分，例如“小王（设计同事）”与“小王（客户）”。限定信息不得凭空补造，实体名称最多 32 个字符。",
+        "“他、她、对方、那个项目、公司”等代称只有在当前上下文能唯一指向某个实体时才改成其稳定名称；指向不唯一时保持保守，不猜测身份，也不把多个候选实体连在一起。近期记录只用于消歧和命名，不能把其中的旧事实写成今天的事件。",
         "relation 只保存正文明确陈述的实体间事实，包含 type、label、subject、object；type 只能是 affiliation、social、ownership、part_of、dependency、collaboration、located_in、other，且 subject 与 object 必须也出现在该事件 arguments 中。普通共同出现不写成 relation。",
         "近期记录出现过同一实体时尽量复用原名称。最多返回 20 个互不重复的事件。",
         "切片总结回答该维度今天具体发生了什么，不写建议，不重复空泛评价。",
@@ -2605,7 +2899,7 @@ ${history}` : "";
         TONE_INSTRUCTIONS[tone],
         customSection,
         SAFETY_INSTRUCTION,
-        '只输出 JSON：{"diary":"...","events":[{"type":"interaction","title":"...","summary":"...","arguments":[{"role":"actor","label":"行动者","entity":{"kind":"person","name":"..."}}],"relations":[{"type":"affiliation","label":"任职于","subject":{"kind":"person","name":"..."},"object":{"kind":"organization","name":"..."}}]}],"facets":[{"category":"工作","summary":"..."},{"category":"生活","summary":"..."}],"insights":["..."],"microAction":"...","selfQuestion":"...","themes":["..."]}'
+        '只输出 JSON：{"diary":"...","events":[{"type":"interaction","status":"occurred","title":"...","summary":"...","traces":[{"kind":"emotion","layer":"self_report","certainty":"stated","text":"...","evidence":"用户短原话"}],"arguments":[{"role":"actor","label":"行动者","entity":{"kind":"person","name":"..."}}],"relations":[{"type":"affiliation","label":"任职于","subject":{"kind":"person","name":"..."},"object":{"kind":"organization","name":"..."}}]}],"facets":[{"category":"工作","summary":"..."},{"category":"生活","summary":"..."}],"insights":["..."],"microAction":"...","selfQuestion":"...","themes":["..."]}'
       ].join("\n")
     },
     {
@@ -2728,32 +3022,56 @@ function buildEventBackfillMessages(sessions, knownElements = [], maximum = 50, 
     {
       role: "system",
       content: [
-        "你是中文日记事件整理助手。把所有给定会话当作同一个自然周联合整理，只从各会话当天的正文与切片中提取明确发生的互动、决定、行动、进展、受阻、变化和经历。",
-        "纯情绪、抽象洞察、建议或其他日期的旧事不能作为事件；没有明确事件时返回空数组，不要为了填满而虚构。",
-        "事件使用四层结构：type、title、summary、arguments、relations。论元包含 role、label、entity；实体 kind 只能是 person、group、organization、project、product、place、activity、object、topic。",
+        "你是中文日记事件整理助手。把所有给定会话当作同一个自然周联合整理，只从每个会话当天的正文与切片中提取明确发生的互动、决定、行动、进展、受阻、变化、经历、意向和未决事项。",
+        "纯抽象洞察、建议、系统推测或其他日期的旧事不能作为当天事件；没有当天内容时返回空数组，不要为了填满而虚构。只有当天明确表达的情绪、身体感受或想法时，可以建立 experience 事件，但不得补造原因。",
+        "校准是逐条整理，不是周摘要。时间、参与者、动作、决定、障碍、结果或未决事项任一明显不同，通常应拆成可独立核对的不同事件；不同会话中的事件不得因为主题相似而合并。只有同一会话对同一动作或结果的重复表述才去重。",
+        "title 要指出具体动作或变化；summary 尽量保留谁在什么情境下对什么对象做了什么，以及明确结果或当前进展。保留人物称呼、项目、产品、地点、工具和具体对象，不用宽泛主题替代正文已有细节。",
+        "事件包含 type、status、title、summary、traces、arguments、relations。type 可为 interaction、decision、action、progress、obstacle、change、experience、intention、open_loop、other；status 可为 occurred、ongoing、planned、blocked、resolved、uncertain，且不得自行推断完成状态。",
+        "traces 最多 12 条，只保存正文明确支持的体验与方向线索。kind 可为 fact、emotion、body、thought、judgment、intention、goal、outcome、open_loop；layer 按 kind 固定为 fact、self_report 或 direction；certainty 为 stated 或 uncertain；evidence 必须是该会话正文中的短原话。",
+        "trace.text 必须保留主体。第一人称内容写清“我”；他人的内在体验只有在正文明确转述其原话或可观察表达时才能记录，不得替他人推断内心。",
+        "论元包含 role、label、entity；实体 kind 只能是 person、group、organization、project、product、place、activity、object、topic。",
         "日记叙述者本人必须统一为 person 实体“我”，不得命名为“用户”。产品或服务的用户应使用带具体名称的 group 实体，例如“插件用户”。",
         "relation 只能保存正文明确支持的实体事实，subject 和 object 必须同时是该事件的论元；普通共同出现不是 relation。每个会话最多 20 个事件。",
-        `所有返回会话合计最多 ${maximum} 个事件；在额度内优先保留事实明确、论元充分、对理解本周有价值的事件。`,
-        "跨会话统一同一实体的名称并去除重复事件；已知实体与内容指向同一对象时复用原名称，不要自行进行模糊合并。",
-        '只输出 JSON：{"sessions":[{"id":"输入中的会话 ID","date":"YYYY-MM-DD","time":"HH:mm","events":[{"type":"interaction","title":"...","summary":"...","arguments":[{"role":"actor","label":"行动者","entity":{"kind":"person","name":"..."}}],"relations":[]}]}]}'
+        `所有返回会话合计最多 ${maximum} 个事件；额度内逐条保留每个会话的明确事件，不因事情日常、影响较小或主题相似而删除。只有确实超过额度时，才优先保留事实明确、论元充分、包含进展或未决事项的事件。`,
+        "必须根据实体类型、称呼、角色、所属组织/项目、共同参与者、明确关系、日期与相邻事件联合完成实体消歧。简称、全称、代称或不同写法只有在上下文一致且能唯一对应时，才统一为历史候选中更具体、稳定的名称；不能只凭字符串相似或共同出现合并。",
+        "同名实体若类型不同必须分开；类型相同但角色、组织/项目、关系或参与事件明显冲突时也不得合并，使用正文或给定上下文能够支持的最短限定名称区分，例如“小王（设计同事）”与“小王（客户）”。限定信息不得凭空补造，实体名称最多 32 个字符。",
+        "“他、她、对方、那个项目、公司”等代称只有在当前会话与相邻内容能唯一指向某个候选时才改成稳定名称；有多个合理候选时不得猜测。历史实体候选只用于消歧与命名，不能把候选上下文中的事实补进待整理事件。",
+        "完成消歧后再跨会话去除真正重复的事件；不同实体参与的相似事件不是重复事件。",
+        '只输出 JSON：{"sessions":[{"id":"输入中的会话 ID","date":"YYYY-MM-DD","time":"HH:mm","events":[{"type":"interaction","status":"occurred","title":"...","summary":"...","traces":[{"kind":"emotion","layer":"self_report","certainty":"stated","text":"...","evidence":"正文短原话"}],"arguments":[{"role":"actor","label":"行动者","entity":{"kind":"person","name":"..."}}],"relations":[]}]}]}'
       ].join("\n")
     },
     {
       role: "user",
-      content: `已知实体：${knownElements.length > 0 ? knownElements.map((element) => `${EVENT_KIND_LABELS[element.kind]}：${element.name}`).join("；") : "无"}\n\n必须保留且仅作为命名与连续性上下文的事件：\n${preservedSessions.length > 0 ? preservedSessions.map((session) => `【${session.date} ${session.time}】${JSON.stringify(session.events.map((event) => ({ type: event.type, title: event.title, arguments: event.arguments, relations: event.relations }))).slice(0, 6e3)}`).join("\n") : "无"}\n\n待整理会话：\n${sessions.map((session) => eventBackfillSessionText(session)).join("\n\n")}`
+      content: `历史实体候选（括号内是消歧上下文，不是待抽取事实）：\n${knownElements.length > 0 ? knownElements.map(eventEntityDisambiguationText).join("\n") : "无"}\n\n必须保留且仅作为命名与连续性上下文的事件：\n${preservedSessions.length > 0 ? preservedSessions.map((session) => `【${session.date} ${session.time}】${JSON.stringify(session.events.map((event) => ({ type: event.type, status: event.status, title: event.title, summary: event.summary, traces: event.traces, arguments: event.arguments, relations: event.relations }))).slice(0, 6e3)}`).join("\n") : "无"}\n\n待整理会话：\n${sessions.map((session) => eventBackfillSessionText(session)).join("\n\n")}`
     }
   ];
 }
 function eventBackfillSessionText(session) {
   const facets = session.facets.map((facet) => `${facet.category}：${facet.summary}`).join("；").slice(0, 2500) || "无";
   const diary = session.diary.slice(0, 6e3);
-  const candidates = Array.isArray(session.events) && session.events.length > 0 ? JSON.stringify(session.events.map((event) => ({ type: event.type, title: event.title, summary: event.summary, arguments: event.arguments, relations: event.relations }))).slice(0, 4e3) : "无";
+  const candidates = Array.isArray(session.events) && session.events.length > 0 ? JSON.stringify(session.events.map((event) => ({ type: event.type, status: event.status, title: event.title, summary: event.summary, traces: event.traces, arguments: event.arguments, relations: event.relations }))).slice(0, 4e3) : "无";
   return `【ID ${session.date}#${session.sessionIndex}｜${session.date} ${session.time}】\n日记：${diary}\n切片：${facets}\n日级候选：${candidates}`;
 }
+function eventEntityDisambiguationText(entity) {
+  const details = [];
+  if (Array.isArray(entity.roles) && entity.roles.length > 0) {
+    details.push(`角色：${entity.roles.join("、")}`);
+  }
+  if (Array.isArray(entity.related) && entity.related.length > 0) {
+    details.push(`相关实体：${entity.related.map((item) => `${EVENT_KIND_LABELS[item.kind]}“${item.name}”`).join("、")}`);
+  }
+  if (Array.isArray(entity.relations) && entity.relations.length > 0) {
+    details.push(`明确关系：${entity.relations.join("、")}`);
+  }
+  if (Array.isArray(entity.contexts) && entity.contexts.length > 0) {
+    details.push(`近期事件：${entity.contexts.join("；")}`);
+  }
+  return `- ${EVENT_KIND_LABELS[entity.kind]}“${entity.name}”${details.length > 0 ? `（${details.join("；")}）` : ""}`.slice(0, 320);
+}
 function buildRepairMessages(raw, shape) {
-  const eventSchema = '{"type":"interaction|decision|action|progress|obstacle|change|experience|other","title":"string","summary":"string","arguments":[{"role":"actor|participant|counterparty|recipient|target|object|context|location|cause|outcome|related","label":"string","entity":{"kind":"person|group|organization|project|product|place|activity|object|topic","name":"string"}}],"relations":[{"type":"affiliation|social|ownership|part_of|dependency|collaboration|located_in|other","label":"string","subject":{"kind":"...","name":"string"},"object":{"kind":"...","name":"string"}}]}';
-  const schema = shape === "follow-up" ? '{"question":"string","continue":boolean}' : shape === "journal" ? `{"diary":"string","events":[${eventSchema}],"facets":[{"category":"string","summary":"string"}],"insights":["string"],"microAction":"string","selfQuestion":"string","themes":["string"]}` : shape === "event-backfill" ? `{"sessions":[{"id":"string","date":"YYYY-MM-DD","time":"HH:mm","events":[${eventSchema}]}]}` : shape === "weekly-report" ? '{"summary":"string","changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : shape === "monthly-report" ? '{"summary":"string","rhythm":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : '{"mood":{"score":3,"reason":"string"},"energy":{"score":3,"reason":"string"},"stress":{"score":3,"reason":"string"}}';
-  const constraints = shape === "journal" ? "events 需为 0–20 个，事件各含 1–16 个合法 arguments 和 0–12 个 relations；facets 需有 2–6 个且 category 互不重复，insights 需根据信息量动态给出 2–4 条，themes 需有 1–5 个。" : shape === "event-backfill" ? "保留 sessions 的 date 和 time，每个 events 为 0–20 个，所有关系端点必须属于同一事件的论元。" : shape === "monthly-report" ? "rhythm、changes、possibleCauses 均需为带 evidenceDates 的非空数组，日期必须位于月报周期；emotionReading、themes、nextStep 与 selfQuestion 不能为空。" : shape === "rating" ? "三个 score 均需为 1–5 的整数，每项 reason 均不能为空。" : "";
+  const eventSchema = '{"type":"interaction|decision|action|progress|obstacle|change|experience|intention|open_loop|other","status":"occurred|ongoing|planned|blocked|resolved|uncertain","title":"string","summary":"string","traces":[{"kind":"fact|emotion|body|thought|judgment|intention|goal|outcome|open_loop","layer":"fact|self_report|direction","certainty":"stated|uncertain","text":"string","evidence":"string"}],"arguments":[{"role":"actor|participant|counterparty|recipient|target|object|context|location|cause|outcome|related","label":"string","entity":{"kind":"person|group|organization|project|product|place|activity|object|topic","name":"string"}}],"relations":[{"type":"affiliation|social|ownership|part_of|dependency|collaboration|located_in|other","label":"string","subject":{"kind":"...","name":"string"},"object":{"kind":"...","name":"string"}}]}';
+  const schema = shape === "follow-up" ? '{"question":"string","continue":boolean}' : shape === "journal" ? `{"diary":"string","events":[${eventSchema}],"facets":[{"category":"string","summary":"string"}],"insights":["string"],"microAction":"string","selfQuestion":"string","themes":["string"]}` : shape === "event-backfill" ? `{"sessions":[{"id":"string","date":"YYYY-MM-DD","time":"HH:mm","events":[${eventSchema}]}]}` : shape === "weekly-report" ? '{"summary":"string","changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : shape === "monthly-report" ? '{"summary":"string","rhythm":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : shape === "observation" ? '{"summary":"string","changes":[{"dimension":"想法|行为|认知|情绪|关系|目标","before":"string","now":"string","level":"single|recurring|stable","evidenceDates":["YYYY-MM-DD"]}],"perspectives":[{"perspective":"事实|情绪|行为|关系|目标|旁观者","observation":"string","basis":"string","layer":"事实|归纳|假设","evidenceDates":["YYYY-MM-DD"]}],"hypotheses":[{"statement":"string","evidenceDates":["YYYY-MM-DD"],"alternative":"string","question":"string"}],"roles":[{"label":"string","observation":"string","evidenceDates":["YYYY-MM-DD"]}],"nextStep":"string","selfQuestion":"string"}' : '{"mood":{"score":3,"reason":"string"},"energy":{"score":3,"reason":"string"},"stress":{"score":3,"reason":"string"}}';
+  const constraints = shape === "journal" ? "events 需为 0–20 个，事件各含合法 status、0–12 个 traces、1–16 个合法 arguments 和 0–12 个 relations；trace.layer 必须与 kind 对应；facets 需有 2–6 个且 category 互不重复，insights 需根据信息量动态给出 2–4 条，themes 需有 1–5 个。只修复结构，保留原结果中的事件事实和实体命名，不在缺少上下文时重新猜测或合并实体。" : shape === "event-backfill" ? "保留 sessions 的 date 和 time，每个 events 为 0–20 个；每个事件含合法 status 与 0–12 个 traces，所有关系端点必须属于同一事件的论元。只修复结构，保留原结果中的事件事实和实体命名，不在缺少上下文时重新猜测或合并实体。" : shape === "monthly-report" ? "rhythm、changes、possibleCauses 均需为带 evidenceDates 的非空数组，日期必须位于月报周期；emotionReading、themes、nextStep 与 selfQuestion 不能为空。" : shape === "observation" ? "每个洞察必须有 evidenceDates；changes 最多 8 条，perspectives 最多 8 条，hypotheses 最多 6 条，roles 最多 5 条；hypotheses 的 alternative/question 不得为空。" : shape === "rating" ? "三个 score 均需为 1–5 的整数，每项 reason 均不能为空。" : "";
   return [
     {
       role: "system",
@@ -2863,6 +3181,447 @@ function parseMonthlyReport(raw, period) {
     },
     selfQuestion: stringField(value, "selfQuestion")
   };
+}
+var OBSERVATION_DIMENSIONS = ["想法", "行为", "认知", "情绪", "关系", "目标"];
+var OBSERVATION_PERSPECTIVES = ["事实", "情绪", "行为", "关系", "目标", "旁观者"];
+var OBSERVATION_LAYERS = ["事实", "归纳", "假设"];
+function observationDateValue(value) {
+  return typeof value === "string" && parseLocalDate(value) !== null ? value : "";
+}
+function observationEvidenceDates(value, allowedDates = new Set()) {
+  const dates = Array.isArray(value) ? value.map(observationDateValue).filter((date) => date.length > 0) : [];
+  const filtered = dates.filter((date) => allowedDates.size === 0 || allowedDates.has(date));
+  const unique = [...new Set(filtered)].sort();
+  return unique.slice(-12);
+}
+function observationSignal(evidenceDates) {
+  const dates = [...new Set((evidenceDates ?? []).map(observationDateValue).filter((date) => date.length > 0))].sort();
+  if (dates.length >= 4) {
+    const first = parseLocalDate(dates[0]);
+    const last = parseLocalDate(dates[dates.length - 1]);
+    if (first !== null && last !== null && localDayOrdinal(last) - localDayOrdinal(first) >= 28) {
+      return { level: "stable", label: "持续出现" };
+    }
+  }
+  if (dates.length >= 2) {
+    return { level: "recurring", label: "多次出现" };
+  }
+  return { level: "single", label: "初现线索" };
+}
+function observationConstrainedLevel(level, evidenceDates) {
+  const signal = observationSignal(evidenceDates);
+  if (level === "stable" && signal.level !== "stable") {
+    return signal.level === "recurring" ? "recurring" : "single";
+  }
+  if (level === "recurring" && signal.level === "single") {
+    return "single";
+  }
+  return ["single", "recurring", "stable"].includes(level) ? level : signal.level;
+}
+function observationLayer(value) {
+  return OBSERVATION_LAYERS.includes(value) ? value : "归纳";
+}
+function observationDimension(value) {
+  return OBSERVATION_DIMENSIONS.includes(value) ? value : "认知";
+}
+function observationPerspective(value) {
+  return OBSERVATION_PERSPECTIVES.includes(value) ? value : "旁观者";
+}
+function observationItemKey(type, item, index = 0) {
+  const source = [type, item?.dimension, item?.before, item?.now, item?.observation, item?.statement, item?.label, index].filter((part) => typeof part === "string" || Number.isInteger(part)).join("|");
+  let hash = 2166136261;
+  for (const char of source) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${type}-${(hash >>> 0).toString(16)}`;
+}
+function normalizeObservationAnalysis(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const summary = typeof value.summary === "string" ? value.summary.trim() : "";
+  if (summary.length === 0) {
+    return null;
+  }
+  const changes = Array.isArray(value.changes) ? value.changes.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const evidenceDates = observationEvidenceDates(item.evidenceDates);
+    const level = observationConstrainedLevel(typeof item.level === "string" ? item.level : "single", evidenceDates);
+    return {
+      key: typeof item.key === "string" && item.key.length > 0 ? item.key : observationItemKey("change", item, index),
+      dimension: observationDimension(item.dimension),
+      before: typeof item.before === "string" && item.before.trim().length > 0 ? item.before.trim() : "暂无明确对照",
+      now: typeof item.now === "string" && item.now.trim().length > 0 ? item.now.trim() : "暂无明确对照",
+      level,
+      signal: observationSignal(evidenceDates).label,
+      evidenceDates
+    };
+  }).filter((item) => item !== null).slice(0, 8) : [];
+  const perspectives = Array.isArray(value.perspectives) ? value.perspectives.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const evidenceDates = observationEvidenceDates(item.evidenceDates);
+    const observation = typeof item.observation === "string" ? item.observation.trim() : typeof item.basis === "string" ? item.basis.trim() : "";
+    if (observation.length === 0) return null;
+    return {
+      key: typeof item.key === "string" && item.key.length > 0 ? item.key : observationItemKey("perspective", item, index),
+      perspective: observationPerspective(item.perspective),
+      observation,
+      basis: typeof item.basis === "string" ? item.basis.trim() : observation,
+      layer: observationLayer(item.layer),
+      evidenceDates
+    };
+  }).filter((item) => item !== null).slice(0, 8) : [];
+  const hypotheses = Array.isArray(value.hypotheses) ? value.hypotheses.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const statement = typeof item.statement === "string" ? item.statement.trim() : "";
+    const alternative = typeof item.alternative === "string" ? item.alternative.trim() : "";
+    const question = typeof item.question === "string" ? item.question.trim() : "";
+    if (statement.length === 0 || alternative.length === 0 || question.length === 0) return null;
+    const evidenceDates = observationEvidenceDates(item.evidenceDates);
+    return {
+      key: typeof item.key === "string" && item.key.length > 0 ? item.key : observationItemKey("hypothesis", item, index),
+      statement,
+      level: observationSignal(evidenceDates).label,
+      evidenceDates,
+      alternative,
+      question
+    };
+  }).filter((item) => item !== null).slice(0, 6) : [];
+  const roles = Array.isArray(value.roles) ? value.roles.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const label = typeof item.label === "string" ? item.label.trim() : "";
+    const observation = typeof item.observation === "string" ? item.observation.trim() : "";
+    if (label.length === 0 || observation.length === 0 || /MBTI|人格|性格|星座|九型|依恋型|依戀型|高敏感|内向|內向|外向|性别|性別|年龄|年齡|种族|種族|民族|国籍|國籍|宗教|政治|性取向|残疾|殘疾|心理|医学|醫學|诊断|診斷|障碍|障礙|抑郁|憂鬱|焦虑|焦慮|躁郁|躁鬱|双相|雙相|强迫症|強迫症|创伤后|創傷後|精神分裂|自闭症|自閉症/i.test(label + observation)) return null;
+    const evidenceDates = observationEvidenceDates(item.evidenceDates);
+    return {
+      key: typeof item.key === "string" && item.key.length > 0 ? item.key : observationItemKey("role", item, index),
+      label,
+      observation,
+      evidenceDates
+    };
+  }).filter((item) => item !== null).slice(0, 5) : [];
+  const nextStep = typeof value.nextStep === "string" ? value.nextStep.trim() : typeof value.nextStep?.action === "string" ? value.nextStep.action.trim() : "";
+  const selfQuestion = typeof value.selfQuestion === "string" ? value.selfQuestion.trim() : "";
+  if (nextStep.length === 0 || selfQuestion.length === 0) {
+    return null;
+  }
+  return { summary, changes, perspectives, hypotheses, roles, nextStep, selfQuestion };
+}
+function observationReportEvidenceDates(reports) {
+  const dates = new Set();
+  for (const descriptor of reports) {
+    const report = descriptor.report ?? {};
+    const descriptorDates = Array.isArray(descriptor.evidenceDates) ? descriptor.evidenceDates : [];
+    for (const date of descriptorDates) {
+      if (observationDateValue(date).length > 0) dates.add(date);
+    }
+    for (const item of [...(report.changes ?? []), ...(report.possibleCauses ?? []), ...(report.rhythm ?? [])]) {
+      for (const date of item.evidenceDates ?? []) {
+        if (observationDateValue(date).length > 0) dates.add(date);
+      }
+    }
+  }
+  return dates;
+}
+function observationFeedbackContext(analysis, feedback = {}) {
+  const context = {};
+  if (typeof analysis !== "object" || analysis === null || typeof feedback !== "object" || feedback === null || Array.isArray(feedback)) {
+    return context;
+  }
+  const sections = [
+    ["change", analysis.changes ?? [], (item) => `${item.dimension}：${item.before} → ${item.now}`],
+    ["perspective", analysis.perspectives ?? [], (item) => `${item.perspective}：${item.observation}`],
+    ["hypothesis", analysis.hypotheses ?? [], (item) => item.statement],
+    ["role", analysis.roles ?? [], (item) => `${item.label}：${item.observation}`]
+  ];
+  for (const [type, items, text] of sections) {
+    for (const item of items) {
+      const key = typeof item.key === "string" ? item.key : "";
+      const itemFeedback = key.length > 0 ? feedback[key] : null;
+      if (itemFeedback === null || typeof itemFeedback !== "object" || !["confirmed", "rejected", "pending"].includes(itemFeedback.status)) {
+        continue;
+      }
+      context[key] = {
+        type,
+        text: text(item),
+        status: itemFeedback.status,
+        correction: typeof itemFeedback.correction === "string" ? itemFeedback.correction.slice(0, 800) : ""
+      };
+    }
+  }
+  return context;
+}
+function observationInterval(descriptor) {
+  const start = typeof descriptor?.periodStart === "string" ? descriptor.periodStart : typeof descriptor?.start === "string" ? descriptor.start : "";
+  const end = typeof descriptor?.periodEnd === "string" ? descriptor.periodEnd : typeof descriptor?.end === "string" ? descriptor.end : "";
+  const startDate = parseLocalDate(start);
+  const endDate = parseLocalDate(end);
+  if (startDate === null || endDate === null || start > end) {
+    return null;
+  }
+  return { start, end, startOrdinal: localDayOrdinal(startDate), endOrdinal: localDayOrdinal(endDate) };
+}
+function observationDescriptorStatus(descriptor) {
+  return descriptor?.periodStatus === "partial" || descriptor?.status === "partial" ? "partial" : "complete";
+}
+function observationDescriptorPath(descriptor) {
+  return typeof descriptor?.filePath === "string" && descriptor.filePath.length > 0 ? descriptor.filePath : typeof descriptor?.path === "string" ? descriptor.path : "";
+}
+function observationDescriptorKey(descriptor) {
+  const interval = observationInterval(descriptor);
+  if (interval === null) return "";
+  const type = descriptor?.type === "monthly" ? "monthly" : "weekly";
+  return `${type}|${interval.start}`;
+}
+function observationEvidenceDateSet(reports) {
+  return observationReportEvidenceDates(Array.isArray(reports) ? reports : []);
+}
+function compareObservationSourcePreference(left, right) {
+  const leftStatus = observationDescriptorStatus(left);
+  const rightStatus = observationDescriptorStatus(right);
+  if (leftStatus !== rightStatus) return leftStatus === "complete" ? -1 : 1;
+  const leftGenerated = typeof left?.generatedAt === "string" ? Date.parse(left.generatedAt) : Number.NaN;
+  const rightGenerated = typeof right?.generatedAt === "string" ? Date.parse(right.generatedAt) : Number.NaN;
+  if (Number.isFinite(leftGenerated) || Number.isFinite(rightGenerated)) {
+    if (!Number.isFinite(leftGenerated)) return 1;
+    if (!Number.isFinite(rightGenerated)) return -1;
+    if (leftGenerated !== rightGenerated) return rightGenerated - leftGenerated;
+  }
+  const leftFine = left?.type === "weekly" ? 1 : 0;
+  const rightFine = right?.type === "weekly" ? 1 : 0;
+  return rightFine - leftFine;
+}
+function dedupeObservationReports(reports) {
+  const byCycle = new Map();
+  for (const descriptor of Array.isArray(reports) ? reports : []) {
+    const interval = observationInterval(descriptor);
+    const path = observationDescriptorPath(descriptor);
+    if (interval === null || path.length === 0) continue;
+    const key = observationDescriptorKey(descriptor) || `${path}|${interval.start}|${interval.end}`;
+    const current = byCycle.get(key);
+    if (current === void 0 || compareObservationSourcePreference(descriptor, current) < 0) {
+      byCycle.set(key, descriptor);
+    }
+  }
+  return [...byCycle.values()].sort((left, right) => {
+    const leftInterval = observationInterval(left);
+    const rightInterval = observationInterval(right);
+    return (rightInterval?.end ?? "").localeCompare(leftInterval?.end ?? "") || (rightInterval?.start ?? "").localeCompare(leftInterval?.start ?? "") || compareObservationSourcePreference(left, right);
+  });
+}
+function observationSourceSelectionScore(selection) {
+  const values = Array.isArray(selection) ? selection : [];
+  return {
+    count: values.length,
+    weekly: values.filter((item) => item?.type === "weekly").length,
+    totalSpan: values.reduce((sum, item) => {
+      const interval = observationInterval(item);
+      return sum + (interval === null ? 0 : interval.endOrdinal - interval.startOrdinal + 1);
+    }, 0),
+    key: values.map((item) => `${item?.type ?? ""}:${item?.periodStart ?? ""}:${item?.periodEnd ?? ""}`).sort().join(",")
+  };
+}
+function betterObservationSourceSelection(left, right) {
+  const a = observationSourceSelectionScore(left);
+  const b = observationSourceSelectionScore(right);
+  if (a.count !== b.count) return a.count > b.count ? left : right;
+  if (a.weekly !== b.weekly) return a.weekly > b.weekly ? left : right;
+  if (a.totalSpan !== b.totalSpan) return a.totalSpan < b.totalSpan ? left : right;
+  return a.key <= b.key ? left : right;
+}
+function selectIndependentObservationSources(reports) {
+  const complete = dedupeObservationReports(reports).filter((item) => observationDescriptorStatus(item) === "complete" && observationInterval(item) !== null);
+  const ordered = [...complete].sort((left, right) => {
+    const a = observationInterval(left);
+    const b = observationInterval(right);
+    return (a?.endOrdinal ?? 0) - (b?.endOrdinal ?? 0) || (a?.startOrdinal ?? 0) - (b?.startOrdinal ?? 0) || (left?.type === "weekly" ? -1 : 1);
+  });
+  const memo = new Map();
+  const solve = (index, lastEndOrdinal) => {
+    const key = `${index}|${lastEndOrdinal}`;
+    const cached = memo.get(key);
+    if (cached !== void 0) return cached;
+    if (index >= ordered.length) return [];
+    const skipped = solve(index + 1, lastEndOrdinal);
+    const interval = observationInterval(ordered[index]);
+    const taken = interval !== null && interval.startOrdinal > lastEndOrdinal ? [ordered[index], ...solve(index + 1, interval.endOrdinal)] : null;
+    const result = taken === null ? skipped : betterObservationSourceSelection(taken, skipped);
+    memo.set(key, result);
+    return result;
+  };
+  return solve(0, Number.NEGATIVE_INFINITY).sort((left, right) => (left.periodStart ?? "").localeCompare(right.periodStart ?? ""));
+}
+function observationMaturityExplanation(maturity) {
+  if (maturity.stage === "continuous") return "持续观照已解锁：可以检视更长期的变化与近期承担的角色。";
+  if (maturity.stage === "cross_period") return `跨周期观照已解锁：已找到 ${maturity.independentPeriodCount} 个互不重叠的完整周期。再积累 ${maturity.remaining.continuousPeriods} 个完整周期、${maturity.remaining.continuousEvidenceDates} 个证据日期，并达到 28 天跨度，可解锁持续观照。`;
+  if (maturity.independentPeriodCount > 0) return `初次观照可用：已读取 ${maturity.eligibleReportCount} 份可解析回顾。跨周期还差 ${maturity.remaining.crossPeriodPeriods} 个互不重叠的完整周期和 ${maturity.remaining.crossPeriodEvidenceDates} 个证据日期。`;
+  return "初次观照可用：至少 1 份可解析回顾即可开始；完整周期完成后才会计入更高阶段。";
+}
+function computeObservationMaturity(reports) {
+  const eligible = dedupeObservationReports(reports);
+  const completeIndependentSources = selectIndependentObservationSources(eligible);
+  const allEvidenceDates = [...observationEvidenceDateSet(eligible)].sort();
+  const independentEvidenceDates = [...observationEvidenceDateSet(completeIndependentSources)].sort();
+  const first = parseLocalDate(independentEvidenceDates[0] ?? "");
+  const last = parseLocalDate(independentEvidenceDates[independentEvidenceDates.length - 1] ?? "");
+  const spanDays = first !== null && last !== null ? localDayOrdinal(last) - localDayOrdinal(first) : 0;
+  const periodCount = completeIndependentSources.length;
+  const initialReady = eligible.length >= 1;
+  const crossReady = periodCount >= 2 && independentEvidenceDates.length >= 2;
+  const continuousReady = periodCount >= 4 && independentEvidenceDates.length >= 4 && spanDays >= 28;
+  const stage = continuousReady ? "continuous" : crossReady ? "cross_period" : "initial";
+  const maturity = {
+    stage,
+    eligibleReportCount: eligible.length,
+    completeReportCount: eligible.filter((item) => observationDescriptorStatus(item) === "complete").length,
+    independentPeriodCount: periodCount,
+    uniqueEvidenceDateCount: independentEvidenceDates.length,
+    allUniqueEvidenceDateCount: allEvidenceDates.length,
+    evidenceSpanDays: spanDays,
+    completeIndependentSources,
+    remaining: {
+      crossPeriodPeriods: Math.max(0, 2 - periodCount),
+      crossPeriodEvidenceDates: Math.max(0, 2 - independentEvidenceDates.length),
+      continuousPeriods: Math.max(0, 4 - periodCount),
+      continuousEvidenceDates: Math.max(0, 4 - independentEvidenceDates.length),
+      continuousSpanDays: Math.max(0, 28 - spanDays)
+    }
+  };
+  maturity.description = observationMaturityExplanation(maturity);
+  return maturity;
+}
+function observationSnapshotMaturity(snapshot) {
+  if (snapshot?.maturity && ["initial", "cross_period", "continuous"].includes(snapshot.maturity.stage)) {
+    return snapshot.maturity;
+  }
+  return computeObservationMaturity(snapshot?.sources ?? []);
+}
+function observationSourceSignature(source) {
+  return `${source?.type ?? ""}|${source?.periodStart ?? ""}|${source?.periodEnd ?? ""}|${source?.periodStatus === "partial" ? "partial" : "complete"}`;
+}
+function deriveObservationFreshness(snapshot, reports, availablePaths = null) {
+  const current = dedupeObservationReports(reports);
+  const savedSources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
+  const currentByPath = new Map(current.map((source) => [observationDescriptorPath(source), source]));
+  const savedByPath = new Map(savedSources.map((source) => [observationDescriptorPath(source), source]));
+  const reasons = [];
+  const newEvidence = current.filter((source) => {
+    const saved = savedByPath.get(observationDescriptorPath(source));
+    return saved === void 0 || observationSourceSignature(saved) !== observationSourceSignature(source) || (source.generatedAt && source.generatedAt !== saved.generatedAt);
+  });
+  if (newEvidence.length > 0) reasons.push(`有 ${newEvidence.length} 份新回顾或更新的回顾`);
+  const missing = savedSources.filter((source) => {
+    const path = observationDescriptorPath(source);
+    if (availablePaths instanceof Set && !availablePaths.has(path)) return true;
+    return !currentByPath.has(path);
+  });
+  if (missing.length > 0) reasons.push(`有 ${missing.length} 个来源文件暂时不可用`);
+  return {
+    stale: reasons.length > 0,
+    hasNewEvidence: newEvidence.length > 0,
+    missingSources: missing,
+    newEvidence,
+    reasons,
+    reason: reasons.join("；")
+  };
+}
+function observationStageRules(stage) {
+  if (stage === "continuous") return "当前阶段 continuous：允许 stable（持续出现）和有证据的近期生活角色线索；仍禁止人格、身份、诊断或确定性结论。";
+  if (stage === "cross_period") return "当前阶段 cross_period：允许 recurring（多次出现）、全部六种视角、待验证假设、替代解释和自我问题；禁止 stable 和生活角色。不得把重叠周报/月报当成独立证据。";
+  return "当前阶段 initial：只生成 single（初现线索）；perspectives 只可用事实、情绪、行为；hypotheses 最多 2 条且必须低风险、带替代解释和问题；禁止 recurring、stable、跨周期措辞和生活角色。";
+}
+function observationContainsCrossPeriodLanguage(value) {
+  return /recurring|stable|多次|反复|持续|稳定|跨周期|长期|一直|一贯|越来越|反复出现/i.test(String(value ?? ""));
+}
+function observationSafeHypothesis(item) {
+  const text = `${item?.statement ?? ""}${item?.alternative ?? ""}${item?.question ?? ""}`;
+  return !/人格|性格|MBTI|星座|九型|依恋|高敏感|内向|外向|身份|性别|年龄|种族|民族|国籍|宗教|政治|性取向|残疾|疾病|诊断|抑郁|焦虑|躁郁|双相|强迫症|创伤|精神分裂|自闭症/i.test(text);
+}
+function constrainObservationAnalysisForMaturity(analysis, maturity) {
+  const stage = maturity?.stage ?? "initial";
+  const next = {
+    ...analysis,
+    changes: (analysis?.changes ?? []).map((item) => ({ ...item })),
+    perspectives: (analysis?.perspectives ?? []).map((item) => ({ ...item })),
+    hypotheses: (analysis?.hypotheses ?? []).map((item) => ({ ...item })),
+    roles: (analysis?.roles ?? []).map((item) => ({ ...item }))
+  };
+  next.hypotheses = next.hypotheses.filter((item) => observationSafeHypothesis(item));
+  if (stage === "initial") {
+    next.changes = next.changes.filter((item) => !observationContainsCrossPeriodLanguage(`${item.before} ${item.now}`)).map((item) => ({ ...item, level: "single", signal: "初现线索" }));
+    next.perspectives = next.perspectives.filter((item) => ["事实", "情绪", "行为"].includes(item.perspective)).slice(0, 6);
+    next.hypotheses = next.hypotheses.filter((item) => !observationContainsCrossPeriodLanguage(`${item.statement} ${item.alternative}`)).slice(0, 2);
+    next.roles = [];
+  } else if (stage === "cross_period") {
+    next.changes = next.changes.filter((item) => item.level !== "stable").map((item) => ({ ...item, level: item.level === "single" ? "single" : "recurring" }));
+    next.roles = [];
+  }
+  return next;
+}
+function buildObservationMessages(reports, feedback = {}, maturity = computeObservationMaturity(reports)) {
+  const selected = maturity?.completeIndependentSources?.length > 0 ? maturity.completeIndependentSources : [];
+  const sourceLines = reports.map((descriptor) => {
+    const report = descriptor.report;
+    const changes = (report.changes ?? []).slice(0, 6).map((item) => `${item.observation ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
+    const causes = (report.possibleCauses ?? []).slice(0, 4).map((item) => `${item.hypothesis ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
+    const themes = (report.themes ?? []).slice(0, 5).map((item) => `${item.name}：${item.observation}`).join("；") || "无";
+    const emotion = report.emotion?.hypothesis ?? report.emotionReading?.hypothesis ?? "无";
+    const rhythm = (report.rhythm ?? []).slice(0, 4).map((item) => `${item.observation ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
+    const metrics = (report.metrics ?? []).slice(0, 6).map((metric) => `${metric.label ?? metric.key ?? "指标"}：本期 ${metric.current ?? "—"}；对照 ${metric.delta ?? "—"}`).join("；") || "无";
+    const status = descriptor.periodStatus === "partial" ? "；周期尚未结束" : "";
+    const independent = selected.some((source) => source.filePath === descriptor.filePath && source.periodStart === descriptor.periodStart && source.periodEnd === descriptor.periodEnd) ? "；可计入独立完整周期" : "";
+    return [`【${descriptor.type === "monthly" ? "月报" : "周报"} ${descriptor.periodStart} 至 ${descriptor.periodEnd}${status}${independent}】`, `摘要：${report.summary}`, `定量指标：${metrics}`, `变化：${changes}`, `可能原因：${causes}`, `情绪线索：${emotion}`, `主题：${themes}`, `节奏：${rhythm}`, `下一步：${report.nextStep?.action ?? ""}`, `自我问题：${report.selfQuestion ?? ""}`].join("\n");
+  }).join("\n\n");
+  const feedbackLines = Object.entries(feedback ?? {}).slice(0, 60).map(([key, item]) => `${item.type ?? "item"}｜${item.text ?? ""}｜${item.status}｜${item.correction ?? ""}｜key=${key}`).join("\n");
+  return [
+    {
+      role: "system",
+      content: [
+        "你是 Mind Trace 的观照助手。只根据用户已经生成的周报和月报做证据化、可验证的自我观察，不读取或要求原始日记。",
+        "不要定义人格、疾病、受保护属性或身份；生活角色只能写成有证据的角色线索。事实、系统归纳、待验证假设必须分层，所有洞察都要有 evidenceDates。语气证据化但有温度，不把变化评价为好或坏。",
+        "变化 dimension 只能是 想法、行为、认知、情绪、关系、目标；level 只能是 single、recurring、stable，signal 不要写百分比。perspective 只能是 事实、情绪、行为、关系、目标、旁观者；layer 只能是 事实、归纳、假设。",
+        "反馈语义：confirmed 表示用户确认符合，rejected 表示用户明确否认不符合，pending 表示用户暂保留；请尊重 rejected 与 correction，避免重复被否认的说法。",
+        `成熟度统计：stage=${maturity.stage}；可解析回顾 ${maturity.eligibleReportCount} 份；选中的互不重叠完整周期 ${maturity.independentPeriodCount} 个；选中来源证据日期 ${maturity.uniqueEvidenceDateCount} 个；证据跨度 ${maturity.evidenceSpanDays} 天。周报和月报可能覆盖同一段时间，重叠不等于独立证据，报告数量不等于置信度。${observationStageRules(maturity.stage)}`,
+        "最多返回 changes 8 条、perspectives 8 条、hypotheses 6 条、roles 5 条；每条 hypothesis 必须提供 alternative/question。",
+        '只输出 JSON：{"summary":"string","changes":[{"dimension":"想法|行为|认知|情绪|关系|目标","before":"string","now":"string","level":"single|recurring|stable","evidenceDates":["YYYY-MM-DD"]}],"perspectives":[{"perspective":"事实|情绪|行为|关系|目标|旁观者","observation":"string","basis":"string","layer":"事实|归纳|假设","evidenceDates":["YYYY-MM-DD"]}],"hypotheses":[{"statement":"string","evidenceDates":["YYYY-MM-DD"],"alternative":"string","question":"string"}],"roles":[{"label":"string","observation":"string","evidenceDates":["YYYY-MM-DD"]}],"nextStep":"string","selfQuestion":"string"}'
+      ].join("\n")
+    },
+    {
+      role: "user",
+      content: `可用报告（只有报告分析字段，不含原始日记）：\n${sourceLines}\n\n用户之前的校准反馈（类型｜原观察｜confirmed/rejected/pending｜可选修正｜key；只包含仍存在的观察）：\n${feedbackLines || "无"}`
+    }
+  ];
+}
+function parseObservation(raw, reports, maturity = computeObservationMaturity(reports)) {
+  const value = objectValue(raw);
+  const stageReports = maturity?.stage === "initial" ? reports : maturity?.completeIndependentSources ?? reports;
+  const allowedDates = observationReportEvidenceDates(stageReports);
+  if (allowedDates.size === 0) {
+    throw new Error("来源报告没有明确的 evidenceDates，无法生成观照");
+  }
+  const normalizeItemsWithEvidence = (items) => Array.isArray(items) ? items.map((item) => ({
+    ...item,
+    evidenceDates: observationEvidenceDates(item?.evidenceDates, allowedDates)
+  })).filter((item) => item.evidenceDates.length > 0) : [];
+  const normalized = normalizeObservationAnalysis({
+    ...value,
+    changes: normalizeItemsWithEvidence(value.changes),
+    perspectives: normalizeItemsWithEvidence(value.perspectives),
+    hypotheses: normalizeItemsWithEvidence(value.hypotheses),
+    roles: normalizeItemsWithEvidence(value.roles)
+  });
+  if (normalized === null) {
+    throw new Error("模型结果缺少观照结构");
+  }
+  if (normalized.changes.length === 0 && normalized.perspectives.length === 0 && normalized.hypotheses.length === 0) {
+    throw new Error("观照至少需要一条有证据的观察");
+  }
+  const constrained = constrainObservationAnalysisForMaturity(normalized, maturity);
+  if (constrained.changes.length === 0 && constrained.perspectives.length === 0 && constrained.hypotheses.length === 0) {
+    throw new Error("当前阶段没有足够的低风险、有证据观照");
+  }
+  return constrained;
 }
 function extractJson(raw) {
   const trimmed = raw.trim();
@@ -3084,6 +3843,13 @@ async function generateMonthlyReport(provider, source, settings) {
     (value) => parseMonthlyReport(value, source.period)
   );
 }
+async function generateObservation(provider, reports, feedback = {}, maturity = computeObservationMaturity(reports)) {
+  if (observationReportEvidenceDates(reports).size === 0) {
+    throw new Error("来源报告没有明确的 evidenceDates，无法生成观照；请先生成带证据日期的报告");
+  }
+  const raw = await provider.generate(buildObservationMessages(reports, feedback, maturity), "observation");
+  return parseWithRepair(provider, raw, "observation", (value) => parseObservation(value, reports, maturity));
+}
 async function generateEventBackfill(provider, sessions, knownElements = [], maximum = 50, preservedSessions = []) {
   const messages = buildEventBackfillMessages(sessions, knownElements, maximum, preservedSessions);
   const inputLength = messages.reduce((sum, message) => sum + message.content.length, 0);
@@ -3257,8 +4023,10 @@ var EventEditor = class {
     this.events.push({
       id: "",
       type: "other",
+      status: "occurred",
       title: "",
       summary: "",
+      traces: [],
       arguments: [{ role: "related", label: "相关", entity: { kind: "topic", name: "" } }],
       relations: []
     });
@@ -3306,6 +4074,11 @@ var EventEditor = class {
       }
       if (!expanded) {
         card.createEl("p", { cls: "mind-trace-event-editor-collapsed-summary", text: event.summary });
+        const compactStatus = card.createDiv({ cls: "mind-trace-event-ledger-status" });
+        compactStatus.createSpan({ text: EVENT_STATUS_LABELS[event.status] });
+        if (event.traces.length > 0) {
+          compactStatus.createSpan({ text: `${event.traces.length} 条体验/方向线索` });
+        }
         const compactElements = card.createDiv({ cls: "mind-trace-event-ledger-elements", attr: { "aria-label": "事件论元" } });
         for (const argument of event.arguments.slice(0, 6)) {
           const pill = compactElements.createSpan({ cls: `mind-trace-event-element is-${argument.entity.kind}` });
@@ -3337,6 +4110,14 @@ var EventEditor = class {
       eventType.addEventListener("change", () => {
         event.type = EVENT_TYPES.includes(eventType.value) ? eventType.value : "other";
       });
+      const eventStatus = identity.createEl("select", { attr: { "aria-label": `事件 ${eventIndex + 1} 进展状态` } });
+      for (const value of EVENT_STATUSES) {
+        eventStatus.createEl("option", { value, text: EVENT_STATUS_LABELS[value] });
+      }
+      eventStatus.value = event.status;
+      eventStatus.addEventListener("change", () => {
+        event.status = EVENT_STATUSES.includes(eventStatus.value) ? eventStatus.value : "occurred";
+      });
       const title = identity.createEl("input", {
         cls: "mind-trace-event-title-input",
         attr: {
@@ -3364,6 +4145,56 @@ var EventEditor = class {
         event.summary = summary.value;
       });
       autoGrow(summary);
+      card.createDiv({ cls: "mind-trace-event-editor-subtitle", text: "体验与方向线索（只保留明确表达）" });
+      const tracesHost = card.createDiv({ cls: "mind-trace-event-traces-editor" });
+      const renderTraces = () => {
+        tracesHost.empty();
+        event.traces.forEach((trace, traceIndex) => {
+          const row = tracesHost.createDiv({ cls: "mind-trace-event-trace-row" });
+          const kind = row.createEl("select", { attr: { "aria-label": `事件 ${eventIndex + 1} 线索 ${traceIndex + 1} 类型` } });
+          for (const value of EVENT_TRACE_KINDS) {
+            kind.createEl("option", { value, text: EVENT_TRACE_KIND_LABELS[value] });
+          }
+          kind.value = trace.kind;
+          kind.addEventListener("change", () => {
+            trace.kind = EVENT_TRACE_KINDS.includes(kind.value) ? kind.value : "fact";
+            trace.layer = EVENT_TRACE_KIND_LAYERS[trace.kind];
+          });
+          const certainty = row.createEl("select", { attr: { "aria-label": `事件 ${eventIndex + 1} 线索 ${traceIndex + 1} 确定性` } });
+          for (const value of EVENT_TRACE_CERTAINTIES) {
+            certainty.createEl("option", { value, text: EVENT_TRACE_CERTAINTY_LABELS[value] });
+          }
+          certainty.value = trace.certainty;
+          certainty.addEventListener("change", () => {
+            trace.certainty = EVENT_TRACE_CERTAINTIES.includes(certainty.value) ? certainty.value : "stated";
+          });
+          const textInput = row.createEl("input", {
+            attr: { type: "text", value: trace.text, maxlength: "160", placeholder: "用户表达的体验、目标或未决事项", "aria-label": `事件 ${eventIndex + 1} 线索 ${traceIndex + 1} 内容` }
+          });
+          textInput.addEventListener("input", () => {
+            trace.text = textInput.value;
+          });
+          const evidence = row.createEl("input", {
+            attr: { type: "text", value: trace.evidence, maxlength: "160", placeholder: "对应的短原话（可留空）", "aria-label": `事件 ${eventIndex + 1} 线索 ${traceIndex + 1} 依据` }
+          });
+          evidence.addEventListener("input", () => {
+            trace.evidence = evidence.value;
+          });
+          const removeTrace = row.createEl("button", { attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的线索 ${traceIndex + 1}` } });
+          (0, import_obsidian4.setIcon)(removeTrace, "x");
+          removeTrace.addEventListener("click", () => {
+            event.traces.splice(traceIndex, 1);
+            renderTraces();
+          });
+        });
+        const addTrace = tracesHost.createEl("button", { cls: "mind-trace-event-add-element", text: "+ 添加体验或方向线索", attr: { type: "button" } });
+        addTrace.disabled = event.traces.length >= MAX_EVENT_TRACES;
+        addTrace.addEventListener("click", () => {
+          event.traces.push({ kind: "emotion", layer: "self_report", certainty: "stated", text: "", evidence: "" });
+          renderTraces();
+          tracesHost.querySelector(".mind-trace-event-trace-row:last-of-type input")?.focus();
+        });
+      };
       card.createDiv({ cls: "mind-trace-event-editor-subtitle", text: "事件论元" });
       const argumentsHost = card.createDiv({ cls: "mind-trace-event-elements-editor" });
       const renderArguments = () => {
@@ -3402,9 +4233,9 @@ var EventEditor = class {
             renderRelations();
           });
           const removeElement = row.createEl("button", {
-            text: "×",
             attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的论元 ${argumentIndex + 1}` }
           });
+          (0, import_obsidian4.setIcon)(removeElement, "x");
           removeElement.addEventListener("click", () => {
             event.arguments.splice(argumentIndex, 1);
             event.relations = [];
@@ -3461,7 +4292,8 @@ var EventEditor = class {
             sync();
           });
           relationLabel.addEventListener("input", sync);
-          const removeRelation = row.createEl("button", { text: "×", attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的关系 ${relationIndex + 1}` } });
+          const removeRelation = row.createEl("button", { attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的关系 ${relationIndex + 1}` } });
+          (0, import_obsidian4.setIcon)(removeRelation, "x");
           removeRelation.addEventListener("click", () => {
             event.relations.splice(relationIndex, 1);
             renderRelations();
@@ -3474,6 +4306,7 @@ var EventEditor = class {
           renderRelations();
         });
       };
+      renderTraces();
       renderArguments();
       renderRelations();
     });
@@ -3555,14 +4388,33 @@ function parseEventSectionMeta(section) {
     throw new Error("事件章节缺少版本标记");
   }
   const value = JSON.parse(raw);
-  if (Number(value.schema) !== 3) {
-    throw new Error("事件章节版本不受支持");
+  if (Number(value.schema) !== EVENT_SCHEMA_VERSION) {
+    throw new Error(`事件结构版本不匹配（当前需要 ${EVENT_SCHEMA_VERSION}）`);
   }
   return {
-    schema: 3,
+    schema: EVENT_SCHEMA_VERSION,
     source: ["daily", "weekly", "manual"].includes(value.source) ? value.source : "daily",
     reviewed: value.reviewed === true
   };
+}
+function parseEventTraces(eventBlock) {
+  const matches = [...eventBlock.matchAll(/^- 线索｜(.+?)｜(.+?)｜(.+?)：(.+)$/gm)];
+  return matches.map((match, index) => {
+    const kindText = parseEventMarkdownText(match[1] ?? "fact");
+    const certaintyText = parseEventMarkdownText(match[2] ?? "stated");
+    const kind = EVENT_TRACE_KINDS.includes(kindText) ? kindText : EVENT_TRACE_KIND_LABEL_VALUES[kindText] ?? "fact";
+    const certainty = EVENT_TRACE_CERTAINTIES.includes(certaintyText) ? certaintyText : "stated";
+    const start = match.index + match[0].length;
+    const end = matches[index + 1]?.index ?? eventBlock.length;
+    const evidence = parseEventMarkdownText(/^  - 依据：(.+)$/m.exec(eventBlock.slice(start, end))?.[1] ?? "");
+    return {
+      kind,
+      layer: EVENT_TRACE_KIND_LAYERS[kind],
+      certainty,
+      text: parseEventMarkdownText(match[4] ?? ""),
+      evidence
+    };
+  });
 }
 function parseSavedEvents(block) {
   if (!block.includes("### 今日事件")) {
@@ -3576,7 +4428,7 @@ function parseSavedEvents(block) {
     return {
       state: "invalid",
       events: [],
-      schema: 3,
+      schema: EVENT_SCHEMA_VERSION,
       source: "daily",
       reviewed: false,
       error: error instanceof Error ? error.message : "事件章节版本无法识别"
@@ -3600,6 +4452,9 @@ function parseSavedEvents(block) {
       const eventBlock = section.slice(start, end);
       const id = parseEventMarkdownText(/<!--\s*mind-trace-event-id:\s*(.+?)\s*-->/.exec(eventBlock)?.[1] ?? "");
       const summary = parseEventMarkdownText(/^- 概要：(.+)$/m.exec(eventBlock)?.[1] ?? "");
+      const rawStatus = parseEventMarkdownText(/^- 状态｜(.+?)：/m.exec(eventBlock)?.[1] ?? "");
+      const status = EVENT_STATUSES.includes(rawStatus) ? rawStatus : EVENT_STATUS_LABEL_VALUES[rawStatus];
+      const traces = parseEventTraces(eventBlock);
       const arguments2 = [];
       for (const match of eventBlock.matchAll(/^- 论元｜(.+?)｜(.+?)｜(.+?)：(.+)$/gm)) {
         const roleCode = parseEventMarkdownText(match[1] ?? "related");
@@ -3649,7 +4504,7 @@ function parseSavedEvents(block) {
           });
         }
       }
-      return { id, type, title, summary, arguments: arguments2, relations };
+      return { id, type, status, title, summary, traces, arguments: arguments2, relations };
     });
     return { state: "ready", events: validateEvents(events), ...meta };
   } catch (error) {
@@ -3720,7 +4575,7 @@ function parseSavedJournal(content, frontmatter) {
       diary: sectionText(block, "日记"),
       events: savedEvents.events,
       eventState: savedEvents.state,
-      eventSchema: savedEvents.schema ?? 3,
+      eventSchema: savedEvents.schema ?? EVENT_SCHEMA_VERSION,
       eventSource: savedEvents.source ?? "daily",
       eventReviewed: savedEvents.reviewed === true,
       ...(savedEvents.error === void 0 ? {} : { eventError: savedEvents.error }),
@@ -3798,7 +4653,7 @@ function historySearchTokens(value) {
 }
 function historySessionFields(session) {
   return [
-    { key: "events", label: "今日事件", text: session.events.map((event) => `${EVENT_TYPE_LABELS[event.type]}｜${event.title}：${event.summary}\n${event.arguments.map((argument) => `${argument.label}｜${EVENT_KIND_LABELS[argument.entity.kind]}：${argument.entity.name}`).join(" · ")}\n${event.relations.map((relation) => `${relation.subject.name}${relation.label}${relation.object.name}`).join(" · ")}`).join("\n"), weight: 6 },
+    { key: "events", label: "今日事件", text: session.events.map((event) => `${EVENT_TYPE_LABELS[event.type]}｜${EVENT_STATUS_LABELS[event.status]}｜${event.title}：${event.summary}\n${event.traces.map((trace) => `${EVENT_TRACE_KIND_LABELS[trace.kind]}：${trace.text}${trace.evidence.length > 0 ? `（原话：${trace.evidence}）` : ""}`).join(" · ")}\n${event.arguments.map((argument) => `${argument.label}｜${EVENT_KIND_LABELS[argument.entity.kind]}：${argument.entity.name}`).join(" · ")}\n${event.relations.map((relation) => `${relation.subject.name}${relation.label}${relation.object.name}`).join(" · ")}`).join("\n"), weight: 6 },
     { key: "themes", label: "主题", text: session.themes.join(" · "), weight: 5 },
     { key: "facets", label: "切片", text: session.facets.map((facet) => `${facet.category}：${facet.summary}`).join("\n"), weight: 5 },
     { key: "diary", label: "日记正文", text: session.diary, weight: 4 },
@@ -3822,6 +4677,10 @@ function createHistorySession(filePath, document2, session, sessionIndex) {
     themes: [...new Set(session.themes)],
     facets: [...new Set(session.facets.map((facet) => facet.category))],
     events: session.events,
+    eventState: session.eventState === "invalid" ? "invalid" : session.eventState === "missing" ? "missing" : "ready",
+    eventError: typeof session.eventError === "string" ? session.eventError : "",
+    eventSchema: Number.isInteger(session.eventSchema) ? session.eventSchema : 0,
+    eventReviewed: session.eventReviewed === true,
     diary: session.diary,
     fields
   };
@@ -3916,6 +4775,78 @@ function queryHistorySessions(entries, query, now = /* @__PURE__ */ new Date()) 
   results.sort((left, right) => query.sort === "relevance" && tokens.length > 0 && right.score !== left.score ? right.score - left.score : right.entry.date.localeCompare(left.entry.date) || right.entry.time.localeCompare(left.entry.time));
   return results;
 }
+function createTrajectoryQuery() {
+  return { datePreset: "all", eventType: "all", entityKey: "", actionObstacle: false };
+}
+function trajectoryDateBounds(preset, now = /* @__PURE__ */ new Date()) {
+  const today = localDateString(now);
+  if (preset === "year") {
+    return { start: `${now.getFullYear()}-01-01`, end: today };
+  }
+  const days = Number(preset);
+  return Number.isFinite(days) && days > 0 ? { start: localDateString(addLocalDays(now, -(days - 1))), end: today } : { start: "", end: today };
+}
+function filterTrajectoryEventRecords(records, query = createTrajectoryQuery(), now = /* @__PURE__ */ new Date()) {
+  const safeQuery = query ?? createTrajectoryQuery();
+  const bounds = trajectoryDateBounds(safeQuery.datePreset, now);
+  return (Array.isArray(records) ? records : []).filter((record) => {
+    if (bounds.start.length > 0 && record.date < bounds.start || bounds.end.length > 0 && record.date > bounds.end) {
+      return false;
+    }
+    if (safeQuery.eventType !== "all" && record.type !== safeQuery.eventType) {
+      return false;
+    }
+    if (safeQuery.actionObstacle && !["action", "obstacle", "intention", "open_loop"].includes(record.type)) {
+      return false;
+    }
+    if (typeof safeQuery.entityKey === "string" && safeQuery.entityKey.length > 0 && !(Array.isArray(record?.elements) ? record.elements : []).some((element) => {
+      try {
+        return eventElementKey(element) === safeQuery.entityKey;
+      } catch {
+        return false;
+      }
+    })) {
+      return false;
+    }
+    return true;
+  }).sort((left, right) => right.date.localeCompare(left.date) || right.time.localeCompare(left.time) || left.sessionIndex - right.sessionIndex || left.eventIndex - right.eventIndex);
+}
+function trajectoryEntitySummaries(records) {
+  const entities = new Map();
+  for (const record of Array.isArray(records) ? records : []) {
+    const seen = new Set();
+    for (const element of Array.isArray(record?.elements) ? record.elements : []) {
+      const name = String(element?.name ?? "").trim();
+      if (name.length === 0) continue;
+      const entity = normalizeEventEntity(element);
+      const key = eventElementKey(entity);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const current = entities.get(key) ?? { key, kind: entity.kind, name: entity.name, count: 0, firstDate: record.date, lastDate: record.date, eventIds: new Set() };
+      current.count += 1;
+      current.eventIds.add(record.id);
+      if (record.date < current.firstDate) current.firstDate = record.date;
+      if (record.date > current.lastDate) {
+        current.lastDate = record.date;
+        current.name = entity.name;
+      }
+      entities.set(key, current);
+    }
+  }
+  return [...entities.values()].sort((left, right) => (right.count - left.count) || right.lastDate.localeCompare(left.lastDate) || left.name.localeCompare(right.name));
+}
+function trajectoryEventStats(entries, records) {
+  const dates = [...new Set((Array.isArray(entries) ? entries : []).map((entry) => entry.date).filter(Boolean))].sort();
+  const streaks = calculateStreaks(Array.isArray(entries) ? entries : []);
+  return {
+    firstDate: dates[0] ?? "",
+    lastDate: dates[dates.length - 1] ?? "",
+    days: dates.length,
+    events: Array.isArray(records) ? records.length : 0,
+    currentStreak: streaks.current,
+    longestStreak: streaks.longest
+  };
+}
 function stableHistoryHash(value) {
   let hash = 2166136261;
   for (const character of value) {
@@ -3989,7 +4920,7 @@ var JournalHistoryIndex = class {
   }
   async load(onProgress = null) {
     if (!this.plugin.isPrivacyUnlocked()) {
-      return { entries: [], themes: [], facets: [], ignoredFiles: 0 };
+      return { entries: [], themes: [], facets: [], ignoredFiles: 0, eventRecords: [], eventStats: { ready: 0, missing: 0, invalid: 0, noEvents: 0, total: 0 } };
     }
     if (this.snapshot !== null) {
       return this.snapshot;
@@ -4032,7 +4963,7 @@ var JournalHistoryIndex = class {
         return result;
       }
     }
-    return { entries: [], themes: [], facets: [], ignoredFiles: 0 };
+    return { entries: [], themes: [], facets: [], ignoredFiles: 0, eventRecords: [], eventStats: { ready: 0, missing: 0, invalid: 0, noEvents: 0, total: 0 } };
   }
   async build(buildVersion, onProgress) {
     const files = this.plugin.app.vault.getMarkdownFiles().filter((file) => this.plugin.app.metadataCache.getFileCache(file)?.frontmatter?.["mind-trace"] === true);
@@ -4048,7 +4979,7 @@ var JournalHistoryIndex = class {
     let ignoredFiles = 0;
     for (const file of files) {
       if (!this.plugin.isPrivacyUnlocked()) {
-        return { entries: [], themes: [], facets: [], ignoredFiles: 0 };
+        return { entries: [], themes: [], facets: [], ignoredFiles: 0, eventRecords: [], eventStats: { ready: 0, missing: 0, invalid: 0, noEvents: 0, total: 0 } };
       }
       const cached = this.cache.get(file.path);
       if (cached !== void 0 && cached.mtime === file.stat.mtime) {
@@ -4061,7 +4992,7 @@ var JournalHistoryIndex = class {
       try {
         const content = await this.plugin.app.vault.cachedRead(file);
         if (!this.plugin.isPrivacyUnlocked() || buildVersion !== this.version) {
-          return { entries: [], themes: [], facets: [], ignoredFiles: 0 };
+          return { entries: [], themes: [], facets: [], ignoredFiles: 0, eventRecords: [], eventStats: { ready: 0, missing: 0, invalid: 0, noEvents: 0, total: 0 } };
         }
         const frontmatter = parseFrontmatter(content);
         if (frontmatter["mind-trace"] !== true) {
@@ -4090,7 +5021,30 @@ var JournalHistoryIndex = class {
       entries,
       themes: frequency(entries.flatMap((entry) => entry.themes)),
       facets: frequency(entries.flatMap((entry) => entry.facets)),
-      ignoredFiles
+      ignoredFiles,
+      eventRecords: flattenHistoryEventRecords(entries),
+      eventStats: (() => {
+        const stats = { ready: 0, missing: 0, invalid: 0, noEvents: 0, total: entries.length };
+        for (const entry of entries) {
+          if (entry.eventState === "missing") {
+            stats.missing += 1;
+          } else if (entry.eventState === "invalid") {
+            stats.invalid += 1;
+          } else {
+            stats.ready += 1;
+            if (!Array.isArray(entry.events) || entry.events.length === 0) {
+              stats.noEvents += 1;
+            }
+          }
+        }
+        return {
+          ...stats,
+          readySessions: stats.ready,
+          missingSessions: stats.missing,
+          invalidSessions: stats.invalid,
+          noEventSessions: stats.noEvents
+        };
+      })()
     };
     if (buildVersion === this.version && this.plugin.isPrivacyUnlocked()) {
       this.snapshot = snapshot;
@@ -4220,20 +5174,92 @@ function eventElementStats(events) {
   return [...stats.values()].sort((left, right) => right.eventIndexes.size - left.eventIndexes.size || left.first - right.first || left.name.localeCompare(right.name));
 }
 function journalEventRecords(document2, filePath = "") {
-  return document2.sessions.flatMap((session, sessionIndex) => session.events.map((event, eventIndex) => ({
-    id: `${filePath || document2.date}#${sessionIndex}:${eventIndex}`,
+  return flattenHistoryEventRecords((document2?.sessions ?? []).map((session, sessionIndex) => ({
     filePath,
     sessionIndex,
-    eventIndex,
-    date: document2.date,
-    time: session.time,
-    type: event.type,
-    title: event.title,
-    summary: event.summary,
-    arguments: event.arguments,
-    relations: event.relations,
-    elements: event.elements
+    date: document2?.date ?? "",
+    time: session?.time ?? "",
+    themes: session?.themes ?? [],
+    facets: session?.facets ?? [],
+    events: session?.events ?? []
   })));
+}
+function normalizeTrajectoryEvent(raw) {
+  const event = normalizeEvent(raw);
+  const entities = new Map();
+  const addEntity = (value) => {
+    try {
+      const entity = normalizeEventEntity(value);
+      if (normalizeEventElementName(entity.name).length > 0) {
+        entities.set(eventElementKey(entity), entity);
+      }
+    } catch {
+    }
+  };
+  for (const element of event.elements) addEntity(element);
+  for (const argument of Array.isArray(raw?.arguments) ? raw.arguments : []) addEntity(argument?.entity ?? argument);
+  for (const element of Array.isArray(raw?.elements) ? raw.elements : []) addEntity(element);
+  const relations = [];
+  const relationKeys = new Set();
+  for (const rawRelation of [...event.relations, ...(Array.isArray(raw?.relations) ? raw.relations : [])]) {
+    try {
+      const relation = normalizeEventRelation(rawRelation);
+      addEntity(relation.subject);
+      addEntity(relation.object);
+      const key = `${relation.type}:${eventElementKey(relation.subject)}:${eventElementKey(relation.object)}:${relation.label.toLocaleLowerCase()}`;
+      if (relation.subject.name.length > 0 && relation.object.name.length > 0 && !relationKeys.has(key)) {
+        relationKeys.add(key);
+        relations.push(relation);
+      }
+    } catch {
+    }
+  }
+  return { ...event, elements: [...entities.values()], relations };
+}
+/*
+ * Event records are deliberately flattened from the local history snapshot.
+ * This keeps the trajectory layer evidence-only: no text generation, inferred
+ * completion state, or cross-record causal links are introduced here.
+ */
+function flattenHistoryEventRecords(entries) {
+  const records = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const events = Array.isArray(entry?.events) ? entry.events : [];
+    for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+      try {
+        const raw = events[eventIndex];
+        const event = normalizeTrajectoryEvent(raw);
+        if (event.title.length === 0 && event.summary.length === 0) {
+          continue;
+        }
+        const filePath = typeof entry?.filePath === "string" ? entry.filePath : "";
+        const sessionIndex = Number.isInteger(entry?.sessionIndex) ? entry.sessionIndex : 0;
+        const id = typeof raw?.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : `${filePath || entry?.date || "journal"}#${sessionIndex}:${eventIndex}`;
+        records.push({
+          id,
+          filePath,
+          sessionIndex,
+          eventIndex,
+          date: typeof entry?.date === "string" ? entry.date : "",
+          time: typeof entry?.time === "string" ? entry.time : "",
+          themes: Array.isArray(entry?.themes) ? [...new Set(entry.themes.map((value) => String(value ?? "").trim()).filter(Boolean))] : [],
+          facets: Array.isArray(entry?.facets) ? [...new Set(entry.facets.map((value) => String(value ?? "").trim()).filter(Boolean))] : [],
+          type: event.type,
+          status: event.status,
+          title: event.title,
+          summary: event.summary,
+          traces: event.traces,
+          arguments: event.arguments,
+          relations: event.relations,
+          elements: event.elements
+        });
+      } catch {
+        // A malformed event must not prevent the rest of the trajectory from rendering.
+      }
+    }
+  }
+  records.sort((left, right) => right.date.localeCompare(left.date) || right.time.localeCompare(left.time) || left.sessionIndex - right.sessionIndex || left.eventIndex - right.eventIndex);
+  return records;
 }
 function aggregateEventRecords(records, nodeLimit = 10) {
   const elements = /* @__PURE__ */ new Map();
@@ -4246,10 +5272,18 @@ function aggregateEventRecords(records, nodeLimit = 10) {
         name: element.name,
         eventIds: /* @__PURE__ */ new Set(),
         dates: /* @__PURE__ */ new Set(),
+        firstDate: record.date,
+        lastDate: record.date,
         latestDate: record.date
       };
       current.eventIds.add(record.id);
       current.dates.add(record.date);
+      if (record.date < current.firstDate) {
+        current.firstDate = record.date;
+      }
+      if (record.date > current.lastDate) {
+        current.lastDate = record.date;
+      }
       if (record.date > current.latestDate) {
         current.latestDate = record.date;
         current.name = element.name;
@@ -4294,10 +5328,138 @@ function aggregateEventRecords(records, nodeLimit = 10) {
     relations: [...relationMap.values()].sort((left, right) => right.eventIds.size - left.eventIds.size || left.key.localeCompare(right.key))
   };
 }
+function eventEntityDisambiguationProfiles(records, limit = 60, focusSessions = []) {
+  const profiles = /* @__PURE__ */ new Map();
+  const ensureProfile = (rawEntity) => {
+    const entity = normalizeEventEntity(rawEntity);
+    if (normalizeEventElementName(entity.name).length === 0) {
+      return null;
+    }
+    const key = eventEntityKey(entity);
+    const profile = profiles.get(key) ?? {
+      key,
+      kind: entity.kind,
+      name: entity.name,
+      eventIds: /* @__PURE__ */ new Set(),
+      dates: /* @__PURE__ */ new Set(),
+      roles: /* @__PURE__ */ new Map(),
+      related: /* @__PURE__ */ new Map(),
+      relations: /* @__PURE__ */ new Map(),
+      contexts: /* @__PURE__ */ new Map(),
+      latestDate: ""
+    };
+    profiles.set(key, profile);
+    return profile;
+  };
+  const increment = (map, key, value) => {
+    const current = map.get(key) ?? { value, count: 0 };
+    current.count += 1;
+    map.set(key, current);
+  };
+  for (const record of Array.isArray(records) ? records : []) {
+    const recordId = String(record?.id ?? `${record?.date ?? ""}:${record?.time ?? ""}:${record?.title ?? ""}`);
+    const date = typeof record?.date === "string" ? record.date : "";
+    const eventEntities = /* @__PURE__ */ new Map();
+    for (const rawEntity of Array.isArray(record?.elements) ? record.elements : []) {
+      const profile = ensureProfile(rawEntity);
+      if (profile !== null) {
+        eventEntities.set(profile.key, { kind: profile.kind, name: profile.name });
+      }
+    }
+    for (const argument of Array.isArray(record?.arguments) ? record.arguments : []) {
+      const profile = ensureProfile(argument?.entity ?? argument);
+      if (profile === null) {
+        continue;
+      }
+      eventEntities.set(profile.key, { kind: profile.kind, name: profile.name });
+      const role = String(argument?.label ?? EVENT_ROLE_LABELS[argument?.role] ?? "相关").trim();
+      if (role.length > 0) {
+        increment(profile.roles, role, role);
+      }
+    }
+    for (const [key, entity] of eventEntities) {
+      const profile = profiles.get(key);
+      if (profile === void 0) {
+        continue;
+      }
+      profile.eventIds.add(recordId);
+      if (date.length > 0) {
+        profile.dates.add(date);
+      }
+      if (date >= profile.latestDate) {
+        profile.latestDate = date;
+        profile.name = entity.name;
+      }
+      const title = String(record?.title ?? "").trim();
+      const summary = String(record?.summary ?? "").trim();
+      const context = `${date}${date.length > 0 ? " " : ""}${title}${summary.length > 0 ? `｜${summary.slice(0, 72)}` : ""}`.trim();
+      if (context.length > 0) {
+        profile.contexts.set(recordId, { date, value: context });
+      }
+      for (const [relatedKey, relatedEntity] of eventEntities) {
+        if (relatedKey !== key) {
+          increment(profile.related, relatedKey, relatedEntity);
+        }
+      }
+    }
+    for (const rawRelation of Array.isArray(record?.relations) ? record.relations : []) {
+      const relation = normalizeEventRelation(rawRelation);
+      const subject = ensureProfile(relation.subject);
+      const object = ensureProfile(relation.object);
+      if (subject === null || object === null) {
+        continue;
+      }
+      increment(subject.relations, `${relation.type}:${object.key}:${relation.label}:out`, `${relation.label}→${EVENT_KIND_LABELS[object.kind]}“${object.name}”`);
+      increment(object.relations, `${relation.type}:${subject.key}:${relation.label}:in`, `${EVENT_KIND_LABELS[subject.kind]}“${subject.name}”→${relation.label}`);
+    }
+  }
+  const focusText = normalizeEventElementName((Array.isArray(focusSessions) ? focusSessions : []).map((session) => [
+    session?.diary,
+    ...(Array.isArray(session?.facets) ? session.facets.flatMap((facet) => [facet?.category, facet?.summary]) : []),
+    ...(Array.isArray(session?.events) ? session.events.flatMap((event) => [event?.title, event?.summary]) : [])
+  ].filter((value) => typeof value === "string").join(" ")).join(" "));
+  const topValues = (map, maximum) => [...map.values()].sort((left, right) => right.count - left.count || String(left.value?.name ?? left.value).localeCompare(String(right.value?.name ?? right.value))).slice(0, maximum).map((item) => item.value);
+  const focusScore = (profile) => {
+    const normalizedName = normalizeEventElementName(profile.name);
+    return normalizedName.length >= 2 && focusText.includes(normalizedName) ? 1 : 0;
+  };
+  return [...profiles.values()].sort((left, right) => focusScore(right) - focusScore(left) || right.eventIds.size - left.eventIds.size || right.dates.size - left.dates.size || right.latestDate.localeCompare(left.latestDate) || left.name.localeCompare(right.name)).slice(0, Math.max(0, limit)).map((profile) => ({
+    kind: profile.kind,
+    name: profile.name,
+    roles: topValues(profile.roles, 3),
+    related: topValues(profile.related, 4),
+    relations: topValues(profile.relations, 3),
+    contexts: [...profile.contexts.values()].sort((left, right) => right.date.localeCompare(left.date) || right.value.localeCompare(left.value)).slice(0, 2).map((item) => item.value)
+  }));
+}
+function renderEventTraces(container, traces, options = {}) {
+  if (!Array.isArray(traces) || traces.length === 0) {
+    return null;
+  }
+  const list = container.createDiv({ cls: "mind-trace-event-traces", attr: { "aria-label": "体验与方向线索" } });
+  for (const trace of traces) {
+    const item = list.createDiv({ cls: `mind-trace-event-trace is-${trace.layer} is-${trace.certainty}` });
+    const heading = item.createDiv({ cls: "mind-trace-event-trace-heading" });
+    heading.createSpan({ text: EVENT_TRACE_KIND_LABELS[trace.kind] ?? "线索" });
+    heading.createSpan({ text: EVENT_TRACE_LAYER_LABELS[trace.layer] ?? "用户陈述" });
+    if (trace.certainty === "uncertain") {
+      heading.createSpan({ text: EVENT_TRACE_CERTAINTY_LABELS.uncertain });
+    }
+    item.createEl("p", { text: trace.text });
+    if (options.showEvidence !== false && trace.evidence.length > 0) {
+      item.createEl("small", { text: `原话：${trace.evidence}` });
+    }
+  }
+  return list;
+}
 function renderEventLedger(container, events, options = {}) {
   const ledger = container.createDiv({ cls: "mind-trace-event-ledger" });
   events.forEach((event, index) => {
     const card = ledger.createEl("article", { cls: "mind-trace-event-ledger-item" });
+    if (typeof event.id === "string" && event.id.length > 0) {
+      card.setAttribute("data-event-id", event.id);
+    }
+    card.setAttribute("data-event-index", String(index));
     card.setAttribute("data-event-title", event.title ?? "");
     card.setAttribute("data-event-summary", event.summary ?? "");
     card.setAttribute("data-event-type", EVENT_TYPE_LABELS[event.type] ?? (typeof event.type === "string" ? event.type : ""));
@@ -4311,6 +5473,8 @@ function renderEventLedger(container, events, options = {}) {
     }
     card.createEl("p", { text: event.summary });
     heading.createSpan({ cls: "mind-trace-event-type", text: EVENT_TYPE_LABELS[event.type] });
+    heading.createSpan({ cls: "mind-trace-event-status", text: EVENT_STATUS_LABELS[event.status] });
+    renderEventTraces(card, event.traces);
     const elements = card.createDiv({ cls: "mind-trace-event-ledger-elements", attr: { "aria-label": "事件论元" } });
     for (const argument of event.arguments) {
       const pill = elements.createSpan({ cls: `mind-trace-event-element is-${argument.entity.kind}` });
@@ -4331,10 +5495,10 @@ function renderDailyEvents(container, session, options = {}) {
   const heading = section.createDiv({ cls: "mind-trace-card-heading" });
   const copy = heading.createDiv();
   copy.createDiv({ cls: "mind-trace-card-title", text: "今天发生了什么" });
-  copy.createEl("p", { text: "直接查看每件事的概要与全部论元；需要修正时使用“整理事件”。" });
+  copy.createEl("p", { text: "查看发生了什么、当时的体验与仍在继续的方向；系统推测不会写入这里。" });
   const headingActions = heading.createDiv({ cls: "mind-trace-event-heading-actions" });
   headingActions.createSpan({ text: session.eventState === "ready" ? `${session.events.length} 件事件` : "事件" });
-  if (!options.editing && options.onEditEvents !== void 0) {
+  if (!options.editing && session.eventState !== "invalid" && options.onEditEvents !== void 0) {
     const edit = headingActions.createEl("button", { text: session.eventState === "ready" ? "整理事件" : "补充事件", attr: { type: "button", "aria-label": "编辑今天的事件" } });
     edit.addEventListener("click", () => options.onEditEvents(null));
   }
@@ -4375,14 +5539,23 @@ function renderDailyEvents(container, session, options = {}) {
   }
   if (session.eventState === "invalid") {
     const state = section.createDiv({ cls: "mind-trace-event-inline-state is-error", attr: { role: "alert" } });
-    state.createDiv({ cls: "mind-trace-event-empty-title", text: "事件章节暂时无法识别" });
-    state.createEl("p", { text: session.eventError ?? "原始 Markdown 未被修改，可以从源码修复这一节。" });
+    state.createDiv({ cls: "mind-trace-event-empty-title", text: "事件结构需要重新生成" });
+    state.createEl("p", { text: session.eventError ?? "原始 Markdown 未被修改。重新生成后会使用当前事件结构替换这一节。" });
+    if (options.onRegenerateEvents !== void 0) {
+      const regenerate = state.createEl("button", {
+        cls: "mod-cta",
+        text: options.busy ? "正在重新生成…" : "重新生成事件",
+        attr: { type: "button", "aria-label": "根据这次日记重新生成事件" }
+      });
+      regenerate.disabled = options.busy === true;
+      regenerate.addEventListener("click", () => options.onRegenerateEvents());
+    }
     return;
   }
   if (session.events.length === 0) {
     const state = section.createDiv({ cls: "mind-trace-event-inline-state" });
     state.createDiv({ cls: "mind-trace-event-empty-title", text: "今天没有提取到明确事件" });
-    state.createEl("p", { text: "没有为了凑数而把情绪或旧事写成事件。" });
+    state.createEl("p", { text: "没有为了凑数而虚构事件、体验来源或旧事的延续。" });
     return;
   }
   renderEventLedger(section, session.events);
@@ -4434,6 +5607,7 @@ function renderSession(container, session, options = {}) {
     text: "今天的正文"
   });
   diaryHeading.createSpan({ text: "心迹日记" });
+  const eventSession = options.events?.editing && Array.isArray(options.events.values) ? { ...session, events: options.events.values, eventState: "ready", eventError: void 0 } : session;
   const diaryWriting = diarySection.createDiv({
     cls: "mind-trace-diary-writing"
   });
@@ -4441,7 +5615,16 @@ function renderSession(container, session, options = {}) {
     cls: "mind-trace-saved-copy mind-trace-saved-diary",
     text: session.diary
   });
-  const eventSession = options.events?.editing && Array.isArray(options.events.values) ? { ...session, events: options.events.values, eventState: "ready", eventError: void 0 } : session;
+  const marginEvents = (Array.isArray(eventSession.events) ? eventSession.events : []).map((event) => String(event?.title ?? event?.summary ?? "").trim()).filter((title) => title.length > 0).slice(0, 2);
+  const marginThemes = (Array.isArray(session.themes) ? session.themes : []).map((theme) => String(theme ?? "").trim()).filter((theme) => theme.length > 0).slice(0, 3);
+  if (marginEvents.length > 0 || marginThemes.length > 0) {
+    diaryWriting.addClass("has-margin");
+    const margin = diaryWriting.createDiv({ cls: "mind-trace-diary-margin" });
+    margin.createDiv({ cls: "mind-trace-diary-margin-title", text: "正文旁注" });
+    const list = margin.createEl("ul");
+    for (const title of marginEvents) list.createEl("li", { cls: "is-event", text: `事件 · ${title}` });
+    for (const theme of marginThemes) list.createEl("li", { cls: "is-theme", text: `主题 · ${theme}` });
+  }
   renderDailyEvents(article, eventSession, options.events ?? {});
   const facetsSection = article.createEl("section", {
     cls: "mind-trace-facets-section"
@@ -4645,13 +5828,17 @@ function renderSavedJournal(container, document2, options = {}) {
     });
     const buttons = document2.sessions.map((session, index) => {
       const selected = index === selectedSessionIndex;
+      const tabId = `mind-trace-session-tab-${document2.date}-${index}`;
+      const panelId = `mind-trace-session-panel-${document2.date}-${index}`;
       const button = tabs.createEl("button", {
         cls: `mind-trace-session-tab${selected ? " is-active" : ""}`,
         text: `第 ${index + 1} 次 · ${session.time}`,
         attr: {
           type: "button",
           role: "tab",
+          id: tabId,
           "aria-selected": String(selected),
+          "aria-controls": panelId,
           tabindex: selected ? "0" : "-1"
         }
       });
@@ -4693,12 +5880,31 @@ function renderSavedJournal(container, document2, options = {}) {
         busy: options.eventSaveBusy === true,
         error: options.eventSaveError,
         onEditEvents: options.onEditEvents === void 0 ? void 0 : (focusIndex) => options.onEditEvents(selectedSessionIndex, focusIndex),
+        onRegenerateEvents: options.onRegenerateEvents === void 0 ? void 0 : () => options.onRegenerateEvents(selectedSessionIndex),
         onCancelEdit: options.onCancelEventEdit,
         onSaveEvents: options.onSaveEvents
       }
     });
     const panel = shell.querySelector(".mind-trace-saved-session");
-    panel?.setAttribute("role", "tabpanel");
+    if (panel instanceof HTMLElement && document2.sessions.length > 1) {
+      const panelId = `mind-trace-session-panel-${document2.date}-${selectedSessionIndex}`;
+      const tabId = `mind-trace-session-tab-${document2.date}-${selectedSessionIndex}`;
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("id", panelId);
+      panel.setAttribute("aria-labelledby", tabId);
+      for (let index = 0; index < document2.sessions.length; index += 1) {
+        if (index === selectedSessionIndex) continue;
+        shell.createDiv({
+          cls: "mind-trace-session-panel-placeholder",
+          attr: {
+            role: "tabpanel",
+            id: `mind-trace-session-panel-${document2.date}-${index}`,
+            "aria-labelledby": `mind-trace-session-tab-${document2.date}-${index}`,
+            hidden: "true"
+          }
+        });
+      }
+    }
   }
 }
 function renderPrintableJournal(container, document2) {
@@ -4762,7 +5968,11 @@ function renderPrintableJournal(container, document2) {
       for (const event of session.events) {
         const item = events.createDiv({ cls: "mind-trace-print-event" });
         item.createEl("h3", { text: `${EVENT_TYPE_LABELS[event.type]}｜${event.title}` });
+        item.createEl("small", { text: `进展：${EVENT_STATUS_LABELS[event.status]}` });
         item.createEl("p", { text: event.summary });
+        for (const trace of event.traces) {
+          item.createEl("p", { text: `${EVENT_TRACE_KIND_LABELS[trace.kind]}：${trace.text}` });
+        }
         item.createEl("small", { text: event.arguments.map((argument) => `${argument.label}｜${EVENT_KIND_LABELS[argument.entity.kind]}：${argument.entity.name}`).join(" · ") });
       }
     }
@@ -4889,10 +6099,14 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
     }
     let target = null;
     for (const candidate of this.contentEl.querySelectorAll("article.mind-trace-event-ledger-item")) {
+      if (Number.isInteger(focus.eventIndex) && candidate.getAttribute("data-event-index") === String(focus.eventIndex)) {
+        target = candidate;
+        break;
+      }
       if (
-        candidate.getAttribute("data-event-title") === focus.title &&
+        (typeof focus.id === "string" && focus.id.length > 0 && candidate.getAttribute("data-event-id") === focus.id || candidate.getAttribute("data-event-title") === focus.title) &&
         candidate.getAttribute("data-event-summary") === focus.summary &&
-        candidate.getAttribute("data-event-type") === focus.type
+        (candidate.getAttribute("data-event-type") === focus.type || candidate.getAttribute("data-event-type") === EVENT_TYPE_LABELS[focus.type])
       ) {
         target = candidate;
         break;
@@ -4901,7 +6115,10 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
     if (target === null) {
       return;
     }
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "center"
+    });
     target.addClass("is-focused");
     window.setTimeout(() => {
       target.removeClass("is-focused");
@@ -4949,6 +6166,9 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
         eventSaveError: this.eventSaveError,
         onEditEvents: (sessionIndex, focusIndex) => {
           this.beginEventEditing(sessionIndex, focusIndex);
+        },
+        onRegenerateEvents: (sessionIndex) => {
+          this.regenerateSessionEvents(sessionIndex);
         },
         onCancelEventEdit: () => {
           this.cancelEventEditing();
@@ -5029,6 +6249,81 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       this.eventSaveBusy = false;
       this.render(true);
     }
+  }
+  regenerateSessionEvents(sessionIndex) {
+    if (this.file === null || this.eventSaveBusy || !Number.isInteger(sessionIndex)) {
+      return;
+    }
+    if (!this.plugin.isProviderConfigured()) {
+      showMindTraceNotice("请先在心迹设置中配置模型与 API Key");
+      return;
+    }
+    let document2;
+    try {
+      document2 = parseSavedJournal(this.data, parseFrontmatter(this.data));
+    } catch (error) {
+      showMindTraceNotice(errorMessage(error));
+      return;
+    }
+    const session = document2.sessions[sessionIndex];
+    if (session === void 0) {
+      showMindTraceNotice("要重新生成的日记会话已经不存在");
+      return;
+    }
+    const file = this.file;
+    const source = {
+      filePath: file.path,
+      fileMtime: file.stat.mtime,
+      date: document2.date,
+      time: session.time,
+      sessionIndex,
+      diary: session.diary,
+      facets: session.facets,
+      events: [],
+      eventState: "invalid",
+      eventSchema: EVENT_SCHEMA_VERSION,
+      eventReviewed: false
+    };
+    const providerLabel = PROVIDER_LABELS[this.plugin.settings.activeProvider] ?? this.plugin.settings.activeProvider;
+    openMindTraceOperation(this.app, this.plugin, {
+      eyebrow: "心迹日记 · 事件重建",
+      title: "重新生成这次记录的事件？",
+      description: `将把这次记录的日记正文与切片发送给 ${providerLabel}，使用当前事件结构重新抽取；不会发送原始问答。原事件章节只在生成与校验成功后替换。`,
+      confirmLabel: "重新生成",
+      stages: ["读取这次记录", "重新抽取事件", "校验事件结构", "写回日记"],
+      run: async (update) => {
+        this.eventSaveBusy = true;
+        this.eventSaveError = "";
+        this.render(true);
+        update({ stage: 1, total: 4, title: "读取这次记录", detail: "正在确认日记没有在任务开始后被修改。" });
+        if (file.stat.mtime !== source.fileMtime) {
+          throw new Error("日记已经发生修改，请重新打开后再生成事件");
+        }
+        update({ stage: 2, total: 4, title: "重新抽取事件", detail: "正在提取事件事实、主观体验、目标与未决事项。" });
+        const results = await generateEventBackfill(this.plugin.createProvider(), [source], [], MAX_SESSION_EVENTS, []);
+        update({ stage: 3, total: 4, title: "校验事件结构", detail: `已生成 ${results[0]?.events.length ?? 0} 件记录，正在验证字段与证据边界。` });
+        update({ stage: 4, total: 4, title: "写回日记", detail: "正在替换不匹配的事件章节。" });
+        const outcome = await this.plugin.repository.applyEventBackfill(results);
+        if (outcome.failed.length > 0) {
+          throw new Error(outcome.failed.map((failure) => failure.message).join("；"));
+        }
+        this.data = await this.app.vault.cachedRead(file);
+        return results[0]?.events ?? [];
+      },
+      onSuccess: async () => {
+        this.eventSaveBusy = false;
+        this.eventSaveError = "";
+        this.render(true);
+      },
+      onError: async () => {
+        this.eventSaveBusy = false;
+        this.render(true);
+      },
+      successTitle: "事件已经重新生成",
+      successDetail: "新的事件结构已写回日记，并可继续手动校正。",
+      successLabel: "查看事件",
+      backgroundSuccess: "日记事件重新生成完成"
+    });
   }
   renderError(container, message) {
     const state = container.createDiv({
@@ -5260,6 +6555,9 @@ function parseWeeklyEventSnapshot(section) {
     const end = headings[index + 1]?.index ?? eventSection.length;
     const block = eventSection.slice(start, end);
     const summary = parseEventMarkdownText(/^- 概要：(.+)$/m.exec(block)?.[1] ?? "");
+    const rawStatus = parseEventMarkdownText(/^- 状态｜(.+?)：/m.exec(block)?.[1] ?? "");
+    const status = EVENT_STATUSES.includes(rawStatus) ? rawStatus : EVENT_STATUS_LABEL_VALUES[rawStatus];
+    const traces = parseEventTraces(block);
     const arguments2 = [];
     for (const match of block.matchAll(/^- 论元｜(.+?)｜(.+?)｜(.+?)：(.+)$/gm)) {
       const roleCode = parseEventMarkdownText(match[1] ?? "related");
@@ -5300,7 +6598,7 @@ function parseWeeklyEventSnapshot(section) {
       });
     }
     try {
-      const event = validateEvents([{ type, title, summary, arguments: arguments2, relations }])[0];
+      const event = validateEvents([{ type, status, title, summary, traces, arguments: arguments2, relations }])[0];
       records.push({ id: `snapshot#${index}`, filePath: "", sessionIndex: -1, eventIndex: index, date, time, ...event });
     } catch {
     }
@@ -5874,9 +7172,11 @@ function renderMemoryStarGraph(container, aggregate, options = {}) {
   const stage = shell.createDiv({ cls: "mind-trace-memory-stage" });
   const inspector = shell.createEl("aside", { cls: "mind-trace-memory-inspector", attr: { "aria-live": "polite", "aria-label": "图谱节点详情" } });
   const toolbar = stage.createDiv({ cls: "mind-trace-memory-toolbar", attr: { "aria-label": "图谱缩放工具" } });
-  const zoomOut = toolbar.createEl("button", { text: "−", attr: { type: "button", "aria-label": "缩小图谱", title: "缩小" } });
+  const zoomOut = toolbar.createEl("button", { attr: { type: "button", "aria-label": "缩小图谱", title: "缩小" } });
+  (0, import_obsidian4.setIcon)(zoomOut, "minus");
   const zoomReset = toolbar.createEl("button", { text: "适合", attr: { type: "button", "aria-label": "重置图谱视图", title: "适合画布" } });
-  const zoomIn = toolbar.createEl("button", { text: "+", attr: { type: "button", "aria-label": "放大图谱", title: "放大" } });
+  const zoomIn = toolbar.createEl("button", { attr: { type: "button", "aria-label": "放大图谱", title: "放大" } });
+  (0, import_obsidian4.setIcon)(zoomIn, "plus");
   const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, role: "group", tabindex: "0", "aria-label": options.ariaLabel ?? "事件与论元记忆星图" });
   svg.classList.add("mind-trace-memory-star");
   const viewport = svgElement("g", { class: "mind-trace-memory-viewport" });
@@ -5964,6 +7264,8 @@ function renderMemoryStarGraph(container, aggregate, options = {}) {
       });
       when.setAttribute("title", "事件发生时间");
       inspector.createEl("p", { cls: "mind-trace-memory-inspector-summary", text: record.summary });
+      inspector.createDiv({ cls: "mind-trace-memory-inspector-count", text: `进展 · ${EVENT_STATUS_LABELS[record.status] ?? "待确认"}` });
+      renderEventTraces(inspector, record.traces);
       const argumentTitle = inspector.createDiv({ cls: "mind-trace-memory-inspector-label", text: `论元 · ${eventRecordArguments(record).length}` });
       argumentTitle.setAttribute("role", "heading");
       argumentTitle.setAttribute("aria-level", "4");
@@ -6199,14 +7501,30 @@ function renderWeeklyEventCenter(container, report, options = {}) {
     stale.createSpan({ text: `Markdown 快照仍是上次生成${monthly ? "月报" : "周报"}时的版本。` });
   }
   if ((liveSource?.eventInvalidSessions.length ?? 0) > 0) {
-    section.createDiv({ cls: "mind-trace-event-inline-state is-error", text: `${liveSource.eventInvalidSessions.length} 篇记录的事件章节格式无法识别，请从原始 Markdown 修复。`, attr: { role: "alert" } });
+    const invalidState = section.createDiv({ cls: "mind-trace-event-inline-state is-error", attr: { role: "alert" } });
+    invalidState.createDiv({ cls: "mind-trace-event-empty-title", text: `${liveSource.eventInvalidSessions.length} 篇记录的事件结构不匹配` });
+    invalidState.createEl("p", { text: `可以逐篇打开处理，也可以确认后批量重新生成${monthly ? "；月报会按自然周分组" : ""}。原事件章节在新结果校验成功前不会改写。` });
+    if (options.onOpenEvent !== void 0 || options.onRegenerateInvalidEvents !== void 0) {
+      const invalidActions = invalidState.createDiv({ cls: "mind-trace-actions" });
+      if (options.onRegenerateInvalidEvents !== void 0) {
+        const regenerate = invalidActions.createEl("button", { cls: "mod-cta", text: `批量重新生成 ${liveSource.eventInvalidSessions.length} 篇`, attr: { type: "button" } });
+        regenerate.disabled = options.backfillBusy === true;
+        regenerate.addEventListener("click", options.onRegenerateInvalidEvents);
+      }
+      if (options.onOpenEvent !== void 0) {
+        for (const item of liveSource.eventInvalidSessions.slice(0, 8)) {
+          const open = invalidActions.createEl("button", { text: `打开 ${item.date} ${item.time}`, attr: { type: "button" } });
+          open.addEventListener("click", () => options.onOpenEvent(item));
+        }
+      }
+    }
   }
   const calibrationCount = liveSource?.eventCalibrationSessions.length ?? 0;
   if (calibrationCount > 0 && options.onBackfillEvents !== void 0) {
     const missing = section.createDiv({ cls: "mind-trace-event-coverage-card" });
     const missingCopy = missing.createDiv();
     missingCopy.createEl("strong", { text: `${calibrationCount} 篇记录可以进行${monthly ? "按周" : "周级"}校准` });
-    missingCopy.createEl("p", { text: "确认后将统一论元、关系与实体名称，人工确认内容保持不变。" });
+    missingCopy.createEl("p", { text: "确认后将统一事件进展、体验/方向线索、论元、关系与实体名称，人工确认内容保持不变。" });
     const button = missing.createEl("button", { text: `校准${scope}事件`, attr: { type: "button" } });
     button.disabled = options.backfillBusy === true;
     button.addEventListener("click", options.onBackfillEvents);
@@ -6226,7 +7544,7 @@ function renderWeeklyEventCenter(container, report, options = {}) {
   if (aggregate.records.length === 0) {
     const empty = section.createDiv({ cls: "mind-trace-event-inline-state" });
     empty.createDiv({ cls: "mind-trace-event-empty-title", text: coverage.source > 0 && coverage.covered === coverage.source ? `${scope}没有提取到明确事件` : `${scope}事件图谱还没有足够数据` });
-    empty.createEl("p", { text: "图谱不会把情绪或推测自动转成事件。" });
+    empty.createEl("p", { text: "图谱不会写入系统推测；主观体验只在用户明确表达时保留。" });
     return;
   }
   let graphWrap;
@@ -6252,6 +7570,7 @@ function renderWeeklyEventCenter(container, report, options = {}) {
   ledgerDetails.open = options.ledgerOpen === true;
   ledgerDetails.addEventListener("toggle", () => options.onLedgerToggle?.(ledgerDetails.open));
   const ledgerSummary = ledgerDetails.createEl("summary");
+  (0, import_obsidian4.setIcon)(ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
   const ledgerSummaryTitle = ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-title", text: "完整事件账" });
   const ledgerSummaryCount = ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-count", text: `${aggregate.records.length} 件` });
   const ledgerHost = ledgerDetails.createDiv({ cls: "mind-trace-weekly-event-ledger-host" });
@@ -6290,6 +7609,20 @@ function renderWeeklyEventCenter(container, report, options = {}) {
   const legend = graphWrap.createDiv({ cls: "mind-trace-event-kind-legend" });
   for (const kind of EVENT_KINDS) {
     legend.createSpan({ cls: `is-${kind}`, text: EVENT_KIND_LABELS[kind] });
+  }
+}
+function renderWeeklyMetricScale(card, metric) {
+  const value = Number.parseFloat(metric?.current);
+  const filled = Number.isFinite(value) ? Math.max(0, Math.min(5, Math.round(value))) : 0;
+  const scale = card.createDiv({
+    cls: "mind-trace-weekly-metric-scale",
+    attr: {
+      role: "img",
+      "aria-label": Number.isFinite(value) ? `${metric.label} 当前 ${value.toFixed(1)} / 5` : `${metric.label} 暂无当前分值`
+    }
+  });
+  for (let level = 1; level <= 5; level += 1) {
+    scale.createSpan({ cls: `mind-trace-weekly-metric-scale-cell${level <= filled ? " is-filled" : ""}`, attr: { "aria-hidden": "true" } });
   }
 }
 function renderSavedWeeklyReport(container, report, options = {}) {
@@ -6344,6 +7677,9 @@ function renderSavedWeeklyReport(container, report, options = {}) {
   foldBody.createDiv({ cls: "mind-trace-diary-kicker", text: "一周概览 \xB7 已归档" });
   foldBody.createDiv({ cls: "mind-trace-card-title mind-trace-diary-title", text: "这一周的正文" });
   foldBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-weekly-summary", text: report.summary });
+  const weeklyIndex = foldBody.createDiv({ cls: "mind-trace-weekly-overview-index", attr: { role: "list", "aria-label": "本周回顾索引" } });
+  weeklyIndex.createSpan({ text: `${Array.isArray(report.changes) ? report.changes.length : 0} 条变化` });
+  weeklyIndex.createSpan({ text: `${Array.isArray(report.themes) ? report.themes.length : 0} 个主题` });
   const metricsSection = shell.createEl("section", { cls: "mind-trace-rating-comparison mind-trace-weekly-metrics" });
   const metricsHeading = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-heading" });
   const metricsCopy = metricsHeading.createDiv();
@@ -6359,6 +7695,7 @@ function renderSavedWeeklyReport(container, report, options = {}) {
     const value = card.createDiv({ cls: "mind-trace-weekly-metric-value" });
     value.createEl("output", { text: metric.current });
     value.createSpan({ text: metric.current === "—" ? "" : "/ 5" });
+    renderWeeklyMetricScale(card, metric);
   }
   renderWeeklyEventCenter(shell, report, options);
   const analysisGrid = shell.createDiv({ cls: "mind-trace-weekly-analysis-grid" });
@@ -6467,6 +7804,10 @@ function renderSavedMonthlyReport(container, report, options = {}) {
   foldBody.createDiv({ cls: "mind-trace-diary-kicker", text: "本月概览 · 已归档" });
   foldBody.createDiv({ cls: "mind-trace-card-title mind-trace-diary-title", text: "这个月的正文" });
   foldBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-weekly-summary", text: report.summary });
+  const monthlyIndex = foldBody.createDiv({ cls: "mind-trace-weekly-overview-index", attr: { role: "list", "aria-label": "本月回顾索引" } });
+  monthlyIndex.createSpan({ text: `${Array.isArray(report.changes) ? report.changes.length : 0} 条变化` });
+  monthlyIndex.createSpan({ text: `${Array.isArray(report.themes) ? report.themes.length : 0} 个主题` });
+  monthlyIndex.createSpan({ text: `${Number(report.activeWeeks) || 0} 个活跃周` });
   const metricsSection = shell.createEl("section", { cls: "mind-trace-rating-comparison mind-trace-weekly-metrics mind-trace-monthly-metrics" });
   const metricsHeading = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-heading" });
   const metricsCopy = metricsHeading.createDiv();
@@ -6482,6 +7823,7 @@ function renderSavedMonthlyReport(container, report, options = {}) {
     const value = card.createDiv({ cls: "mind-trace-weekly-metric-value" });
     value.createEl("output", { text: metric.current });
     value.createSpan({ text: metric.current === "—" ? "" : "/ 5" });
+    renderWeeklyMetricScale(card, metric);
   }
   const rhythm = shell.createEl("section", { cls: "mind-trace-editor-card mind-trace-monthly-rhythm" });
   const rhythmHeading = rhythm.createDiv({ cls: "mind-trace-card-heading" });
@@ -6700,6 +8042,9 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       },
       onBackfillEvents: () => {
         void this.beginEventBackfill(report);
+      },
+      onRegenerateInvalidEvents: () => {
+        void this.beginInvalidEventRegeneration(report);
       }
     };
   }
@@ -6769,7 +8114,7 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
     openMindTraceOperation(this.app, this.plugin, {
       eyebrow: `心迹${monthly ? "月报" : "周报"} · 图谱整理`,
       title: `校准${scope}图谱事件？`,
-      description: `将把 ${candidates.length} 篇记录的日记正文、切片和已有事件发送给 ${providerLabel}，统一事件、实体与关系；不会发送原始问答。`,
+      description: `将把 ${candidates.length} 篇记录的日记正文、切片和已有事件发送给 ${providerLabel}，统一进展、体验/方向线索、实体与关系；不会发送原始问答。`,
       confirmLabel: "开始整理",
       stages: [`收集${scope}事件`, "校准图谱事件", "逐篇写回日记", "重新读取事件", "生成并更新图谱"],
       run: async (update) => {
@@ -6808,6 +8153,57 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       successDetail: `已校准 ${candidates.length} 篇记录，并根据写回后的事件重新生成图谱。`,
       successLabel: "查看图谱",
       backgroundSuccess: `${scope}图谱整理完成`
+    });
+  }
+  async beginInvalidEventRegeneration(report) {
+    const candidates = this.eventSource?.eventInvalidSessions ?? [];
+    if (candidates.length === 0 || this.backfillBusy || this.eventSource === null) {
+      return;
+    }
+    const providerLabel = PROVIDER_LABELS[this.plugin.settings.activeProvider] ?? this.plugin.settings.activeProvider;
+    const monthly = report.reportType === "monthly";
+    const scope = monthly ? "本月" : "本周";
+    openMindTraceOperation(this.app, this.plugin, {
+      eyebrow: `心迹${monthly ? "月报" : "周报"} · 事件修复`,
+      title: `批量重新生成 ${candidates.length} 篇事件？`,
+      description: `将把结构不匹配记录的日记正文与切片发送给 ${providerLabel}${monthly ? "，并按自然周分组抽取" : ""}；已有效的事件只用于统一命名和控制每周数量，不会被改写，也不会发送原始问答。`,
+      confirmLabel: "批量重新生成",
+      stages: [`收集${scope}异常记录`, monthly ? "按自然周重新抽取" : "重新抽取事件", "校验并逐篇写回", "重新汇总图谱"],
+      run: async (update) => {
+        this.backfillBusy = true;
+        this.backfillMessage = `正在批量重新生成 ${candidates.length} 篇结构不匹配的事件。`;
+        this.refreshEventCenter(report);
+        update({ stage: 1, total: 4, title: `收集${scope}异常记录`, detail: "正在读取最新日记，避免覆盖任务期间发生的修改。" });
+        const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
+        const repository = monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository;
+        const latestSource = await repository.collect(period);
+        const regenerated = await this.plugin.regenerateInvalidEvents(latestSource, update);
+        this.eventSource = regenerated;
+        this.eventError = "";
+        return regenerated;
+      },
+      onSuccess: async () => {
+        this.backfillBusy = false;
+        this.backfillMessage = "";
+        this.refreshEventCenter(report);
+        await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      },
+      onError: async () => {
+        this.backfillBusy = false;
+        this.backfillMessage = "";
+        try {
+          const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
+          this.eventSource = await (monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository).collect(period);
+          this.eventError = "";
+        } catch (error) {
+          this.eventError = errorMessage(error);
+        }
+        this.refreshEventCenter(report);
+      },
+      successTitle: `${scope}不匹配事件已经重新生成`,
+      successDetail: `已重新生成 ${candidates.length} 篇记录，并根据写回后的事件更新图谱。`,
+      successLabel: "查看图谱",
+      backgroundSuccess: `${scope}事件批量重新生成完成`
     });
   }
   beginReportRegeneration(report) {
@@ -7013,9 +8409,10 @@ function homeWeekSummary(current, previous) {
 }
 var MIND_TRACE_MODES = [
   { id: "home", label: "主页", icon: "home" },
-  { id: "record", label: "记录", icon: "notebook-pen" },
   { id: "trajectory", label: "轨迹", icon: "route" },
-  { id: "reports", label: "报告", icon: "file-text" }
+  { id: "record", label: "记录", icon: "notebook-pen", accent: true },
+  { id: "reports", label: "回顾", icon: "file-text" },
+  { id: "observation", label: "观照", icon: "scan-eye" }
 ];
 function collectWeeklyReportFiles(app) {
   const files = [];
@@ -7099,6 +8496,17 @@ var JournalView = class extends import_obsidian4.ItemView {
   historySearchTimer = null;
   metricsRenderTimer = null;
   historyLoadToken = 0;
+  trajectoryView = "events";
+  trajectoryQuery = createTrajectoryQuery();
+  trajectoryVisibleCount = 40;
+  trajectoryEventPanelEl = null;
+  trajectoryEntityExpanded = false;
+  observationState = null;
+  observationLoading = false;
+  observationReports = null;
+  observationError = "";
+  observationLoadToken = 0;
+  observationDashboardCardEl = null;
   getViewType() {
     return JOURNAL_VIEW_TYPE;
   }
@@ -7126,7 +8534,8 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (!this.monthlyReportLoading) {
         this.monthlyReportState = null;
       }
-      if (!this.busy && !this.weeklyReportLoading && !this.monthlyReportLoading && (this.mode === "home" || this.mode === "reports" || this.mode === "trajectory")) {
+      this.observationReports = null;
+      if (!this.busy && !this.weeklyReportLoading && !this.monthlyReportLoading && (this.mode === "home" || this.mode === "reports" || this.mode === "trajectory" || this.mode === "observation")) {
         if (this.metricsRenderTimer !== null) {
           window.clearTimeout(this.metricsRenderTimer);
         }
@@ -7164,6 +8573,9 @@ var JournalView = class extends import_obsidian4.ItemView {
     this.historyProgress = { done: 0, total: 0 };
     this.historyQuery = createHistoryQuery();
     this.historyVisibleCount = 30;
+    this.trajectoryQuery = createTrajectoryQuery();
+    this.trajectoryVisibleCount = 40;
+    this.trajectoryEntityExpanded = false;
     this.historySectionEl = null;
     this.historyProgressEl = null;
     if (this.historySearchTimer !== null) {
@@ -7182,6 +8594,13 @@ var JournalView = class extends import_obsidian4.ItemView {
       return;
     }
     const shell = container.createDiv({ cls: "mind-trace-app" });
+    shell.appendChild(document.createComment(`
+THESIS: Mind Trace is one connected instrument for recording and inspecting evidence; it refuses the rounded dashboard card wall.
+OWN-WORLD: Mature Obsidian structure on cool neutral surfaces; Record indigo, Trajectory cobalt, mood coral, energy teal, stress amber, Observation orchid; broad horizontal bands, fine keylines, tabular metadata.
+STORY: The user sees today, records, scans state, follows events, then opens bounded Review or evidence-led Observation.
+FIRST VIEWPORT: 56px destination bar; wide date + Record band; three state channels; 2:1 trend/events workspace; Review and Observation below.
+FORM: Horizontal instrument, approved comp A; user-pinned category standard; seed 3a34c5d6.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md`));
     this.renderNav(shell);
     const mode = MIND_TRACE_MODES.find((item) => item.id === this.mode) ?? MIND_TRACE_MODES[0];
     const panel = shell.createDiv({
@@ -7202,24 +8621,46 @@ var JournalView = class extends import_obsidian4.ItemView {
       case "trajectory":
         this.renderTrajectory(panel);
         break;
+      case "observation":
+        this.renderObservation(panel);
+        break;
       default:
         this.renderHome(panel);
         break;
+    }
+    for (const item of MIND_TRACE_MODES) {
+      if (item.id === mode.id) {
+        continue;
+      }
+      shell.createDiv({
+        cls: "mind-trace-tabpanel mind-trace-tabpanel-placeholder",
+        attr: {
+          role: "tabpanel",
+          id: `mind-trace-panel-${item.id}`,
+          "aria-labelledby": `mind-trace-tab-${item.id}`,
+          hidden: "true"
+        }
+      });
     }
     if (context !== null) {
       restoreMindTraceContext(container, context);
     }
   }
   renderNav(shell) {
-    const nav = shell.createDiv({
+    const nav = shell.createEl("nav", {
       cls: "mind-trace-nav",
-      attr: { role: "tablist", "aria-label": "心迹模块" }
+      attr: { "aria-label": "心迹模块导航" }
     });
-    const items = nav.createDiv({ cls: "mind-trace-nav-items" });
+    const brand = nav.createDiv({ cls: "mind-trace-nav-brand" });
+    (0, import_obsidian4.setIcon)(brand.createSpan({ cls: "mind-trace-nav-brand-mark", attr: { "aria-hidden": "true" } }), "notebook-pen");
+    const brandCopy = brand.createSpan({ cls: "mind-trace-nav-brand-copy" });
+    brandCopy.createSpan({ cls: "mind-trace-nav-brand-name", text: "心迹" });
+    brandCopy.createSpan({ cls: "mind-trace-nav-brand-subtitle", text: "Mind Trace" });
+    const items = nav.createDiv({ cls: "mind-trace-nav-items", attr: { role: "tablist", "aria-label": "心迹模块" } });
     for (const [index, mode] of MIND_TRACE_MODES.entries()) {
       const active = this.mode === mode.id;
       const button = items.createEl("button", {
-        cls: `mind-trace-nav-item${active ? " is-active" : ""}`,
+        cls: `mind-trace-nav-item${active ? " is-active" : ""}${mode.accent ? " is-record" : ""}`,
         attr: {
           id: `mind-trace-tab-${mode.id}`,
           type: "button",
@@ -7243,12 +8684,12 @@ var JournalView = class extends import_obsidian4.ItemView {
         });
       });
       button.addEventListener("keydown", (event) => {
-        if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") {
+        if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
           return;
         }
         event.preventDefault();
-        const offset = event.key === "ArrowRight" ? 1 : -1;
-        const next = MIND_TRACE_MODES[(index + offset + MIND_TRACE_MODES.length) % MIND_TRACE_MODES.length];
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? MIND_TRACE_MODES.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + MIND_TRACE_MODES.length) % MIND_TRACE_MODES.length;
+        const next = MIND_TRACE_MODES[nextIndex];
         this.setMode(next.id);
         window.requestAnimationFrame(() => {
           const target = this.containerEl.children[1]?.querySelector(`[data-mind-trace-focus-key="mind-trace-mode-${next.id}"]`);
@@ -7304,6 +8745,7 @@ var JournalView = class extends import_obsidian4.ItemView {
               date: document2.date,
               time: session.time,
               type: EVENT_TYPE_LABELS[event.type] ?? EVENT_TYPE_LABELS.other,
+              status: EVENT_STATUS_LABELS[event.status] ?? EVENT_STATUS_LABELS.uncertain,
               title: event.title,
               summary: event.summary,
               filePath: entry.filePath,
@@ -7359,7 +8801,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       facets: [...facetCounts.entries()].map(([category, count]) => ({ category, count })).sort(
         (left, right) => right.count - left.count || left.category.localeCompare(right.category)
       ).slice(0, 8),
-      recentEvents: recentEvents.slice(0, 8),
+      recentEvents: recentEvents.slice(0, 24),
       series: filtered.map((entry) => {
         const aiDay = aiByDate.get(entry.date);
         const ai = { mood: null, energy: null, stress: null };
@@ -7634,14 +9076,24 @@ var JournalView = class extends import_obsidian4.ItemView {
     const shell = container.createDiv({ cls: "mind-trace-home-shell" });
     const result = collectMetrics(this.app);
     const allEntries = result.entries;
-    const weekStart = localDateString(startOfLocalWeek(new Date()));
-    const currentWeekEntries = allEntries.filter((entry) => entry.date >= weekStart && entry.date <= localDateString(new Date()));
+    const now = /* @__PURE__ */ new Date();
+    const today = localDateString(now);
+    const weekStart = localDateString(startOfLocalWeek(now));
+    const currentWeekEntries = allEntries.filter((entry) => entry.date >= weekStart && entry.date <= today);
     const currentWeek = metricSnapshot(currentWeekEntries);
     const lastWeekPeriod = completedPeriod("weekly");
     const lastWeek = metricSnapshot(periodEntries(allEntries, lastWeekPeriod));
     const header = shell.createDiv({ cls: "mind-trace-home-header" });
-    const heading = header.createDiv();
+    const heading = header.createDiv({ cls: "mind-trace-home-header-copy" });
     heading.createDiv({ cls: "mind-trace-eyebrow", text: "心迹" });
+    const dateBand = heading.createDiv({ cls: "mind-trace-home-date-band" });
+    dateBand.createSpan({ cls: "mind-trace-home-date-label", text: "今天" });
+    dateBand.createEl("time", {
+      cls: "mind-trace-home-date-value",
+      text: today,
+      attr: { datetime: today }
+    });
+    dateBand.createSpan({ cls: "mind-trace-home-date-weekday", text: weekdayText(today) });
     heading.createDiv({
       cls: "mind-trace-home-title",
       text: currentWeek.days > 0 ? `这周留下了 ${currentWeek.days} 个落点` : "从今天留下一个落点",
@@ -7711,39 +9163,47 @@ var JournalView = class extends import_obsidian4.ItemView {
         void this.openJournalFile(event.filePath, event.sessionIndex, event);
       }
     );
-    if (result.entries.length === 0) {
-      const topGrid = shell.createDiv({ cls: "mind-trace-home-grid mind-trace-home-report-grid" });
-      const calendarCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
-      const weeklyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
-      dashboard.renderCalendar(result.entries, calendarCell);
-      this.renderWeeklyReportCard(weeklyCell);
-      const emptySection = shell.createDiv({ cls: "mind-trace-home-section" });
-      dashboard.renderEmpty(emptySection);
-      this.homeDashboard = dashboard;
-      window.setTimeout(() => {
-        void this.loadWeeklyReportCard();
-      }, 0);
-      return;
-    }
+    const latestEntry = [...allEntries].reverse().find((entry) => entry.date <= today) ?? null;
+    this.renderHomeStateBand(shell, latestEntry);
     const filtered = filterMetrics(allEntries, this.plugin.settings.dashboardRange);
     const currentStart = addLocalDays(new Date(), -(this.plugin.settings.dashboardRange - 1));
     const previousEnd = localDateString(addLocalDays(currentStart, -1));
     const previousStart = localDateString(addLocalDays(currentStart, -this.plugin.settings.dashboardRange));
     const previousFiltered = allEntries.filter((entry) => entry.date >= previousStart && entry.date <= previousEnd);
-    const topGrid = shell.createDiv({ cls: "mind-trace-home-grid mind-trace-home-report-grid" });
-    const calendarCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
-    const weeklyCell = topGrid.createDiv({ cls: "mind-trace-home-cell" });
-    this.renderWeeklyReportCard(weeklyCell);
+    const overview = shell.createDiv({ cls: "mind-trace-home-overview" });
+    const calendarCell = overview.createDiv({ cls: "mind-trace-home-overview-calendar" });
+    const trendCell = overview.createDiv({ cls: "mind-trace-home-overview-trend" });
     dashboard.renderCalendar(result.entries, calendarCell);
-    const trendSection = shell.createDiv({ cls: "mind-trace-home-section mind-trace-home-panel" });
-    dashboard.renderTrend(trendSection, filtered, this.plugin.settings.dashboardRange, previousFiltered);
-    const bottomGrid = shell.createDiv({ cls: "mind-trace-home-bottom-grid" });
-    const themesCell = bottomGrid.createDiv({ cls: "mind-trace-home-cell" });
-    const facetsCell = bottomGrid.createDiv({ cls: "mind-trace-home-cell" });
-    const eventsCell = bottomGrid.createDiv({ cls: "mind-trace-home-cell" });
+    dashboard.renderTrend(trendCell, filtered, this.plugin.settings.dashboardRange, previousFiltered);
+    const secondary = shell.createDiv({ cls: "mind-trace-home-secondary" });
+    const eventsCell = secondary.createDiv({ cls: "mind-trace-home-workspace-events" });
+    dashboard.renderEventsCard(eventsCell);
+    const eventsLink = eventsCell.createEl("button", {
+      cls: "mind-trace-home-support-link",
+      text: "查看完整事件脉络",
+      attr: { type: "button" }
+    });
+    eventsLink.addEventListener("click", () => {
+      this.trajectoryView = "events";
+      this.setMode("trajectory");
+    });
+    const reviewCell = secondary.createDiv({ cls: "mind-trace-home-support-review" });
+    this.renderWeeklyReportCard(reviewCell);
+    const observationCell = secondary.createDiv({ cls: "mind-trace-home-support-observation" });
+    this.renderObservationDashboardCard(observationCell);
+    const archive = shell.createDiv({ cls: "mind-trace-home-archive" });
+    const archiveHeading = archive.createDiv({ cls: "mind-trace-home-archive-heading" });
+    archiveHeading.createDiv({ cls: "mind-trace-home-section-title", text: "继续检视", attr: { role: "heading", "aria-level": "2" } });
+    archiveHeading.createEl("p", { text: "主题与切片是原始记录的入口，不替代轨迹中的事实脉络。" });
+    const archiveGrid = archive.createDiv({ cls: "mind-trace-home-archive-grid" });
+    const themesCell = archiveGrid.createDiv({ cls: "mind-trace-home-cell" });
+    const facetsCell = archiveGrid.createDiv({ cls: "mind-trace-home-cell" });
     dashboard.renderThemesCard(themesCell, filtered);
     dashboard.renderFacetsCard(facetsCell);
-    dashboard.renderEventsCard(eventsCell);
+    if (result.entries.length === 0) {
+      const emptySection = archive.createDiv({ cls: "mind-trace-home-section mind-trace-home-empty-section" });
+      dashboard.renderEmpty(emptySection);
+    }
     if (result.ignoredFiles > 0) {
       shell.createEl("p", {
         cls: "mind-trace-warning",
@@ -7754,7 +9214,32 @@ var JournalView = class extends import_obsidian4.ItemView {
     void this.loadAndRenderInsights(this.plugin.settings.dashboardRange, result.entries);
     window.setTimeout(() => {
       void this.loadWeeklyReportCard();
+      void this.loadObservationReports();
     }, 0);
+  }
+  renderHomeStateBand(container, entry) {
+    const band = container.createEl("section", {
+      cls: "mind-trace-home-state-band",
+      attr: { "aria-labelledby": "mind-trace-home-state-title" }
+    });
+    const heading = band.createDiv({ cls: "mind-trace-home-state-heading" });
+    heading.createDiv({ cls: "mind-trace-home-section-title", text: "今天的状态", attr: { id: "mind-trace-home-state-title", role: "heading", "aria-level": "2" } });
+    heading.createSpan({ cls: "mind-trace-home-state-source", text: entry === null ? "等待第一条记录" : `来自 ${entry.date} 的自评` });
+    const channels = band.createDiv({ cls: "mind-trace-home-state-channels" });
+    for (const [key, label, icon] of [["mood", "心情", "heart"], ["energy", "精力", "zap"], ["stress", "压力", "alert-circle"]]) {
+      const channel = channels.createDiv({ cls: `mind-trace-home-state-channel is-${key}` });
+      const channelLabel = channel.createDiv({ cls: "mind-trace-home-state-label" });
+      (0, import_obsidian4.setIcon)(channelLabel.createSpan({ cls: "mind-trace-home-state-icon", attr: { "aria-hidden": "true" } }), icon);
+      channelLabel.createSpan({ text: label });
+      const score = entry === null ? null : entry[key];
+      const value = channel.createDiv({ cls: "mind-trace-home-state-value" });
+      value.createEl("strong", { text: score === null ? "—" : score.toFixed(1) });
+      value.createSpan({ text: score === null ? "尚无记录" : ratingStateWord(key, Math.round(score)) });
+      const track = channel.createDiv({ cls: "mind-trace-home-state-track", attr: { "aria-hidden": "true" } });
+      for (let level = 1; level <= 5; level += 1) {
+        track.createSpan({ cls: `mind-trace-home-state-segment${score !== null && level <= Math.round(score) ? " is-filled" : ""}` });
+      }
+    }
   }
   renderFormationStrip(container, entries) {
     const settings = this.plugin.settings;
@@ -7793,11 +9278,10 @@ var JournalView = class extends import_obsidian4.ItemView {
     meta.createSpan({ cls: "mind-trace-formation-period", text: periodLabel });
     const total = head.createDiv({ cls: "mind-trace-formation-total" });
     total.createSpan({ cls: "mind-trace-formation-count", text: countText });
+    total.createSpan({ cls: "mind-trace-formation-percent", text: `${Math.round(percent)}%` });
     const shown = overflow > 0 ? days : (minimum > 0 ? minimum : 1);
     const fillWidth = minimum > 0 && overflow > 0 ? (minimum / days) * 100 : Math.min(100, percent);
     const spillWidth = overflow > 0 ? (overflow / days) * 100 : 0;
-    const level = block.createDiv({ cls: "mind-trace-formation-level" });
-    level.createSpan({ cls: "mind-trace-formation-percent", text: `${Math.round(percent)}%`, attr: { style: `left: ${Math.min(100, percent)}%` } });
     const bar = block.createDiv({ cls: "mind-trace-formation-bar" });
     const track = bar.createDiv({
       cls: "mind-trace-formation-track",
@@ -7822,10 +9306,18 @@ var JournalView = class extends import_obsidian4.ItemView {
       block.addClass("is-overflow");
       track.createDiv({
         cls: "mind-trace-formation-spill",
-        attr: { style: `left: ${fillWidth}%; width: ${spillWidth}%`, "aria-hidden": "true" }
+        attr: {
+          style: `left: ${fillWidth}%; width: ${spillWidth}%`,
+          "aria-hidden": "true",
+          title: `超过${label}最低门槛 ${overflow} 天`
+        }
       });
     }
-    block.createDiv({ cls: "mind-trace-formation-caption", text: formationCaption(label, { days, minimum, overflow }) });
+    const caption = block.createDiv({ cls: "mind-trace-formation-caption", text: formationCaption(label, { days, minimum, overflow }) });
+    if (overflow > 0) {
+      caption.addClass("is-overflow");
+      caption.setAttribute("role", "status");
+    }
   }
   renderMonthlyFormationBlock(container, view) {
     const { kicker, label, periodLabel, segments, reachedCount, total, totalDays } = view;
@@ -7839,12 +9331,18 @@ var JournalView = class extends import_obsidian4.ItemView {
     if (reachedCount === total) {
       count.addClass("is-complete");
     }
+    const hasOverflow = segments.some((segment) => segment.overflow > 0);
+    const overflowSegments = segments.filter((segment) => segment.overflow > 0);
+    const overflowDays = overflowSegments.reduce((sum, segment) => sum + segment.overflow, 0);
+    if (hasOverflow) {
+      block.addClass("is-overflow");
+    }
     const labels = block.createDiv({ cls: "mind-trace-formation-seg-labels" });
     for (const segment of segments) {
       const label = labels.createSpan({ cls: "mind-trace-formation-seg-label" });
       if (segment.reached) {
         label.addClass("is-reached");
-        label.textContent = "✓";
+        label.textContent = "达成";
         label.setAttribute("title", `已达成 ${Math.round(segment.percent)}%`);
       } else {
         label.textContent = `${Math.round(segment.percent)}%`;
@@ -7863,32 +9361,38 @@ var JournalView = class extends import_obsidian4.ItemView {
       }
     });
     for (const segment of segments) {
-      const cell = track.createDiv({ cls: `mind-trace-formation-segment${segment.reached ? " is-reached" : ""}` });
+      const cell = track.createDiv({ cls: `mind-trace-formation-segment${segment.reached ? " is-reached" : ""}${segment.overflow > 0 ? " is-overflow" : ""}` });
       const fillWidth = segment.overflow > 0 ? (segment.minimum / segment.days) * 100 : Math.min(100, segment.percent);
       const spillWidth = segment.overflow > 0 ? (segment.overflow / segment.days) * 100 : 0;
       cell.createDiv({ cls: "mind-trace-formation-seg-fill", attr: { style: `width: ${fillWidth}%`, "aria-hidden": "true" } });
       if (segment.overflow > 0) {
-        cell.createDiv({ cls: "mind-trace-formation-seg-spill", attr: { style: `left: ${fillWidth}%; width: ${spillWidth}%`, "aria-hidden": "true" } });
+        cell.createDiv({ cls: "mind-trace-formation-seg-spill", attr: { style: `left: ${fillWidth}%; width: ${spillWidth}%`, "aria-hidden": "true", title: `超过最低门槛 ${segment.overflow} 天` } });
       }
-      cell.setAttribute("title", `${segment.start.slice(5).replace("-", "/")}—${segment.end.slice(5).replace("-", "/")} · ${segment.days}/${segment.minimum} 天`);
+      const overflowText = segment.overflow > 0 ? ` · 超过门槛 ${segment.overflow} 天` : "";
+      cell.setAttribute("title", `${segment.start.slice(5).replace("-", "/")}—${segment.end.slice(5).replace("-", "/")} · ${segment.days}/${segment.minimum} 天${overflowText}`);
+      cell.setAttribute("aria-label", `${segment.start.slice(5).replace("-", "/")}到${segment.end.slice(5).replace("-", "/")}，${segment.days}/${segment.minimum} 天${segment.overflow > 0 ? `，超过门槛 ${segment.overflow} 天` : ""}`);
     }
     let captionText;
     if (totalDays === 0) {
       captionText = "写下今天的落点，进度就会点亮。";
     } else if (reachedCount === total) {
-      captionText = `本月 ${total} 段全部达成，可以准备月报。`;
+      captionText = hasOverflow ? `本月 ${total} 段全部达成，其中 ${overflowSegments.length} 段超过门槛 ${overflowDays} 天。` : `本月 ${total} 段全部达成，可以准备月报。`;
     } else if (reachedCount > 0) {
-      captionText = `已达成 ${reachedCount}/${total} 段，继续点亮更多周。`;
+      captionText = hasOverflow ? `已达成 ${reachedCount}/${total} 段，其中 ${overflowSegments.length} 段超过门槛 ${overflowDays} 天。` : `已达成 ${reachedCount}/${total} 段，继续点亮更多周。`;
     } else {
       captionText = "本月还没有达成任何周，继续记录即可点亮。";
     }
-    block.createDiv({ cls: "mind-trace-formation-caption", text: captionText });
+    const caption = block.createDiv({ cls: `mind-trace-formation-caption${hasOverflow ? " is-overflow" : ""}`, text: captionText });
+    if (hasOverflow) {
+      caption.setAttribute("role", "status");
+    }
   }
   renderWeeklyReportCard(container, existing = null) {
     const state = this.weeklyReportState;
     const period = state?.period ?? completedPeriod("weekly");
     const card = existing ?? container.createEl("section", { cls: "mind-trace-weekly-card" });
     card.empty();
+    card.classList.remove("is-copy-roomy", "is-copy-compact");
     this.weeklyReportCardEl = card;
     const header = card.createDiv({ cls: "mind-trace-lead-card-header" });
     const title = header.createDiv();
@@ -7901,6 +9405,10 @@ var JournalView = class extends import_obsidian4.ItemView {
       button.addEventListener("click", handler);
       return button;
     };
+    const isReady = state?.kind === "ready" || state?.kind === "stale";
+    if (!isReady) {
+      body.classList.add("is-state");
+    }
     if (state === null || state.kind === "loading") {
       const status = body.createDiv({ cls: "mind-trace-report-status mind-trace-llm-inline-status", attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
       if (this.weeklyReportProgress !== null) {
@@ -7915,7 +9423,18 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (state.kind === "stale") {
         header.createSpan({ cls: "mind-trace-report-badge", text: "日记有更新" });
       }
-      body.createEl("p", { text: state.summary });
+      const summary = typeof state.summary === "string" ? state.summary : "";
+      if (summary.length < 90) {
+        card.classList.add("is-copy-roomy");
+      } else if (summary.length > 180) {
+        card.classList.add("is-copy-compact");
+      }
+      body.createEl("p", { text: summary });
+      const stats = state.source?.stats ?? {};
+      const facts = body.createDiv({ cls: "mind-trace-home-support-facts" });
+      facts.createSpan({ text: `记录日 ${Number(stats.days) || 0} 天` });
+      facts.createSpan({ text: `${Number(stats.sessions) || 0} 篇日记` });
+      facts.createSpan({ text: state.kind === "stale" ? "待更新" : "已同步" });
       action("打开完整周报", () => void this.openWeeklyReportFile(state.file.path), true);
       if (state.kind === "stale") {
         action("更新周报", () => {
@@ -8016,31 +9535,6 @@ var JournalView = class extends import_obsidian4.ItemView {
     }
     this.renderMonthlyReportCard(this.monthlyReportCardEl.parentElement, this.monthlyReportCardEl);
   }
-  renderReportStatsCard(container) {
-    const allEntries = collectMetrics(this.app).entries;
-    const weeklyFiles = collectWeeklyReportFiles(this.app);
-    const monthlyFiles = collectMonthlyReportFiles(this.app);
-    const days = new Set(allEntries.map((entry) => entry.date)).size;
-    const sessions = allEntries.reduce((sum, entry) => sum + entry.sessions, 0);
-    const streaks = calculateStreaks(allEntries);
-    const card = container.createEl("section", { cls: "mind-trace-record-card mind-trace-report-stats-card" });
-    const header = card.createDiv({ cls: "mind-trace-lead-card-header" });
-    header.createDiv({ cls: "mind-trace-home-section-title", text: "报告统计", attr: { role: "heading", "aria-level": "2" } });
-    const rows = [
-      ["周报数量", weeklyFiles.length],
-      ["月报数量", monthlyFiles.length],
-      ["累计记录日", days],
-      ["累计记录篇数", sessions],
-      ["当前连续记录", streaks.current],
-      ["最长连续记录", streaks.longest]
-    ];
-    const body = card.createDiv({ cls: "mind-trace-report-stats-body" });
-    for (const [label, value] of rows) {
-      const row = body.createDiv({ cls: "mind-trace-report-stats-row" });
-      row.createSpan({ text: label });
-      row.createEl("strong", { text: String(value) });
-    }
-  }
   renderHistoryCenter(container) {
     const section = container.createEl("section", {
       cls: "mind-trace-home-section mind-trace-history-center",
@@ -8051,6 +9545,12 @@ var JournalView = class extends import_obsidian4.ItemView {
   }
   async loadAndRenderHistory() {
     if (this.historyLoading || (this.mode !== "home" && this.mode !== "trajectory") || !this.plugin.isPrivacyUnlocked()) {
+      return;
+    }
+    if (this.historySnapshot !== null) {
+      if (this.mode === "trajectory" && this.trajectoryView === "events" && this.trajectoryEventPanelEl !== null && this.trajectoryEventPanelEl.isConnected) {
+        this.renderTrajectoryEvents(this.trajectoryEventPanelEl);
+      }
       return;
     }
     const token = ++this.historyLoadToken;
@@ -8080,6 +9580,9 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (token === this.historyLoadToken) {
         this.historyLoading = false;
         this.renderHistoryContent();
+        if (this.mode === "trajectory" && this.trajectoryView === "events" && this.trajectoryEventPanelEl !== null && this.trajectoryEventPanelEl.isConnected) {
+          this.renderTrajectoryEvents(this.trajectoryEventPanelEl);
+        }
       }
     }
   }
@@ -8097,7 +9600,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       text: "历史与回望",
       attr: { id: "mind-trace-history-title", role: "heading", "aria-level": "2" }
     });
-    headingCopy.createEl("p", { text: "在正文、问答、主题和反思中找回过去的线索。全部检索只在本地进行。" });
+    headingCopy.createEl("p", { text: "在正文、事件、实体、主题、问答和反思中找回过去的线索。全部检索只在本地进行。" });
     if (this.historyLoading && this.historySnapshot === null) {
       const progressText = this.historyProgress.total > 0 ? `正在整理历史记录 ${this.historyProgress.done}/${this.historyProgress.total}…` : "正在整理你的历史记录…";
       this.historyProgressEl = section.createDiv({ cls: "mind-trace-history-loading", text: progressText, attr: { role: "status" } });
@@ -8177,7 +9680,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       cls: "mind-trace-history-search-input",
       attr: {
         type: "search",
-        placeholder: "搜索正文、主题、问题、行动…",
+        placeholder: "搜索正文、事件、实体、主题、问题、行动…",
         "aria-label": "搜索历史记录"
       }
     });
@@ -8278,7 +9781,8 @@ var JournalView = class extends import_obsidian4.ItemView {
     if (selected.size > 0) {
       const selectedValues = group.createDiv({ cls: "mind-trace-history-selected-values" });
       for (const value of selected) {
-        const chip = selectedValues.createEl("button", { text: `${value} ×`, attr: { type: "button", "aria-label": `移除${label}筛选 ${value}` } });
+        const chip = selectedValues.createEl("button", { text: value, attr: { type: "button", "aria-label": `移除${label}筛选 ${value}` } });
+        (0, import_obsidian4.setIcon)(chip.createSpan({ cls: "mind-trace-chip-remove-icon", attr: { "aria-hidden": "true" } }), "x");
         chip.addEventListener("click", () => {
           selected.delete(value);
           this.historyVisibleCount = 30;
@@ -8330,7 +9834,8 @@ var JournalView = class extends import_obsidian4.ItemView {
     const row = container.createDiv({ cls: "mind-trace-history-active-filters" });
     const chips = row.createDiv({ cls: "mind-trace-history-active-filter-chips" });
     const addChip = (label, onRemove) => {
-      const chip = chips.createEl("button", { cls: "mind-trace-history-active-filter-chip", text: `${label} ×`, attr: { type: "button", "aria-label": `移除筛选 ${label}` } });
+      const chip = chips.createEl("button", { cls: "mind-trace-history-active-filter-chip", text: label, attr: { type: "button", "aria-label": `移除筛选 ${label}` } });
+      (0, import_obsidian4.setIcon)(chip.createSpan({ cls: "mind-trace-chip-remove-icon", attr: { "aria-hidden": "true" } }), "x");
       chip.addEventListener("click", () => {
         onRemove();
         this.historyVisibleCount = 30;
@@ -8418,7 +9923,7 @@ var JournalView = class extends import_obsidian4.ItemView {
     open.createSpan({ cls: "mind-trace-history-match-label", text: result.matchLabel });
     const excerpt = open.createEl("p", { cls: "mind-trace-history-result-excerpt" });
     this.appendHistoryHighlight(excerpt, result.excerpt, result.tokens);
-    open.createSpan({ cls: "mind-trace-history-result-arrow", text: "→", attr: { "aria-hidden": "true" } });
+    (0, import_obsidian4.setIcon)(open.createSpan({ cls: "mind-trace-history-result-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
     open.addEventListener("click", () => void this.openJournalFile(entry.filePath, entry.sessionIndex));
     if (entry.themes.length > 0) {
       const themes = card.createDiv({ cls: "mind-trace-history-result-themes", attr: { "aria-label": "记录主题" } });
@@ -8563,8 +10068,11 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (entry.themes.length > 3) {
         themes.createSpan({
           cls: "mind-trace-home-chip is-more",
-          text: `+${entry.themes.length - 3}`,
-          attr: { title: entry.themes.join("、") }
+          text: `+${entry.themes.length - 3} 个`,
+          attr: {
+            title: entry.themes.join("、"),
+            "aria-label": `还有 ${entry.themes.length - 3} 个主题：${entry.themes.slice(3).join("、")}`
+          }
         });
       }
     }
@@ -8572,11 +10080,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       cls: "mind-trace-home-sessions",
       text: `${entry.sessions} 篇`
     });
-    main.createSpan({
-      cls: "mind-trace-home-row-arrow",
-      text: "→",
-      attr: { "aria-hidden": "true" }
-    });
+    (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
     const open = () => {
       void this.openJournalFile(entry.filePath);
     };
@@ -8588,31 +10092,566 @@ var JournalView = class extends import_obsidian4.ItemView {
       }
     });
   }
+  async collectObservationReports() {
+    const weekly = collectWeeklyReportFiles(this.app).map((item) => ({ ...item, type: "weekly" }));
+    const monthly = collectMonthlyReportFiles(this.app).map((item) => ({ ...item, type: "monthly" }));
+    const candidates = [...weekly, ...monthly].sort((left, right) => right.end.localeCompare(left.end) || right.start.localeCompare(left.start) || (right.type === "monthly" ? 1 : -1));
+    const reports = [];
+    for (const item of candidates) {
+      try {
+        const content = await this.app.vault.cachedRead(item.file);
+        const frontmatter = parseFrontmatter(content, "心迹报告");
+        const report = parseSavedReport(content, frontmatter);
+        reports.push({
+          type: item.type,
+          periodStart: report.periodStart,
+          periodEnd: report.periodEnd,
+          periodStatus: report.periodStatus === "partial" ? "partial" : "complete",
+          generatedAt: report.generatedAt,
+          filePath: item.file.path,
+          report
+        });
+      } catch {
+      }
+    }
+    if (candidates.length > 0 && reports.length === 0) {
+      throw new Error(`找到 ${candidates.length} 份候选报告，但全部无法解析；请先修复报告格式后重试。`);
+    }
+    const deduped = dedupeObservationReports(reports);
+    const counts = { weekly: 0, monthly: 0 };
+    return deduped.filter((item) => {
+      const limit = item.type === "monthly" ? 3 : 8;
+      if (counts[item.type] >= limit) return false;
+      counts[item.type] += 1;
+      return true;
+    });
+  }
+  async loadObservationReports() {
+    if (this.observationLoading || this.observationReports !== null) {
+      return;
+    }
+    const token = ++this.observationLoadToken;
+    this.observationLoading = true;
+    this.observationError = "";
+    this.render(true);
+    try {
+      this.observationReports = await this.collectObservationReports();
+    } catch (error) {
+      this.observationReports = [];
+      this.observationError = errorMessage(error);
+    } finally {
+      this.observationLoading = false;
+      if (token === this.observationLoadToken && (this.mode === "home" || this.mode === "observation") && this.leaf.view === this) {
+        this.render(true);
+      }
+    }
+  }
+  renderObservationStatus(container, kind) {
+    const status = container.createDiv({ cls: "mind-trace-observation-state", attr: { role: kind === "error" ? "alert" : "status", "aria-live": "polite" } });
+    const mark = kind === "loading" ? "读取" : kind === "error" ? "重试" : kind === "unconfigured" ? "连接" : "等待";
+    const title = kind === "loading" ? "正在读取可解析的回顾" : kind === "error" ? "观照来源暂时无法读取" : kind === "unconfigured" ? "先选择一个模型服务" : kind === "missing" ? "还没有可用的回顾" : "还没有这次观照";
+    const body = kind === "loading" ? "只整理最近 8 份周报与 3 份月报的分析字段，不会发送原始日记。" : kind === "error" ? this.observationError || "读取回顾时遇到问题。" : kind === "unconfigured" ? "配置模型名称和 API Key 后，才能生成新的观照；已有观照仍可继续查看。" : kind === "missing" ? "至少需要 1 份能成功解析的周报或月报。先生成一份回顾，再回来观照。" : "从最近的周报与月报开始，整理一张可验证的变化描线。";
+    status.createDiv({ cls: "mind-trace-observation-state-mark", text: mark, attr: { "aria-hidden": "true" } });
+    status.createDiv({ cls: "mind-trace-observation-state-title", text: title, attr: { role: "heading", "aria-level": "2" } });
+    status.createEl("p", { text: body });
+    const actions = status.createDiv({ cls: "mind-trace-actions" });
+    if (kind === "loading") {
+      return;
+    }
+    if (kind === "missing") {
+      const reports = actions.createEl("button", { cls: "mod-cta", text: "前往回顾", attr: { type: "button" } });
+      reports.addEventListener("click", () => this.setMode("reports"));
+      return;
+    }
+    if (kind === "unconfigured") {
+      const setup = actions.createEl("button", { cls: "mod-cta", text: "打开设置", attr: { type: "button" } });
+      setup.addEventListener("click", () => this.plugin.openSettings());
+      return;
+    }
+    const retry = actions.createEl("button", { cls: "mod-cta", text: kind === "error" ? "重试读取" : "开始观照", attr: { type: "button" } });
+    retry.addEventListener("click", () => {
+      if (kind === "error") {
+        this.observationReports = null;
+        void this.loadObservationReports();
+      } else {
+        this.regenerateObservation(false);
+      }
+    });
+  }
+  observationSourceDescriptors(reports) {
+    return reports.map((item) => ({ type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt }));
+  }
+  observationGeneratedText(value) {
+    return value ? weeklyGeneratedAtText(value) : "生成时间未记录";
+  }
+  observationFeedback(key) {
+    const feedback = this.plugin.settings.selfObservation?.feedback?.[key];
+    return feedback === void 0 ? { status: "pending", correction: "" } : { status: feedback.status, correction: feedback.correction ?? "" };
+  }
+  observationFeedbackLabel(status) {
+    return status === "confirmed" ? "你已确认" : status === "rejected" ? "你已否认" : "待你验证";
+  }
+  openObservationFeedback(type, item) {
+    const key = item.key || observationItemKey(type, item);
+    const text = type === "change" ? `${item.dimension}：${item.before} → ${item.now}` : type === "perspective" ? `${item.perspective}：${item.observation}` : type === "hypothesis" ? item.statement : `${item.label}：${item.observation}`;
+    new ObservationFeedbackModal(this.app, this.plugin, { text }, this.observationFeedback(key), async (feedback) => {
+      await this.plugin.saveObservationFeedback(key, feedback);
+      this.render(true);
+    }).open();
+  }
+  renderObservationFeedback(container, type, item, host = null) {
+    const feedback = this.observationFeedback(item.key);
+    const feedbackHost = host ?? container.parentElement;
+    if (feedbackHost instanceof HTMLElement) {
+      feedbackHost.classList.add("has-observation-feedback", `is-feedback-${feedback.status}`);
+    }
+    const status = container.createSpan({ cls: `mind-trace-observation-feedback-status is-${feedback.status}`, text: this.observationFeedbackLabel(feedback.status) });
+    if (feedback.correction.length > 0 && feedbackHost instanceof HTMLElement) {
+      feedbackHost.createDiv({ cls: "mind-trace-observation-correction", text: `你的修正：${feedback.correction}` });
+    }
+    const button = container.createEl("button", { cls: "mind-trace-observation-calibrate", text: "校准", attr: { type: "button" } });
+    button.addEventListener("click", () => this.openObservationFeedback(type, item));
+  }
+  renderObservationEvidenceDates(container, dates) {
+    if (!Array.isArray(dates) || dates.length === 0) return;
+    const evidence = container.createDiv({ cls: "mind-trace-observation-evidence", attr: { "aria-label": "证据日期" } });
+    evidence.createSpan({ cls: "mind-trace-observation-evidence-label", text: "证据" });
+    const entries = collectMetrics(this.app).entries;
+    for (const date of dates.slice(-8)) {
+      const match = entries.find((entry) => entry.date === date);
+      if (match !== void 0) {
+        const button = evidence.createEl("button", { text: date, attr: { type: "button", title: `打开 ${date} 的日记`, "aria-label": `打开 ${date} 的日记` } });
+        button.addEventListener("click", () => void this.plugin.openJournalDate(date));
+      } else {
+        evidence.createEl("time", { text: date, attr: { datetime: date, title: "对应日记不可用" } });
+      }
+    }
+  }
+  renderObservationSourceDetails(container, sources) {
+    const details = container.createEl("details", { cls: "mind-trace-observation-sources" });
+    details.createEl("summary", { text: "来源与边界" });
+    details.createEl("p", { text: "观照只发送已生成报告中的摘要、变化、主题和自我问题，不发送原始日记。重叠的周报与月报不会重复增强线索；线索强度是证据出现方式的本地归纳，不等于真相概率。" });
+    const list = details.createEl("ul");
+    for (const source of sources) {
+      const item = list.createEl("li");
+      const statusLabel = source.periodStatus === "partial" ? "（周期尚未结束）" : "";
+      const label = `${source.type === "monthly" ? "月报" : "周报"} ${source.periodStart} — ${source.periodEnd}${statusLabel}`;
+      const file = this.app.vault.getAbstractFileByPath(source.filePath);
+      if (file instanceof import_obsidian4.TFile) {
+        const button = item.createEl("button", { cls: "mind-trace-observation-source-link", text: label, attr: { type: "button" } });
+        button.addEventListener("click", () => void this.openWeeklyReportFile(source.filePath));
+      } else {
+        item.createSpan({ cls: "mind-trace-observation-source-link is-missing", text: `${label}（文件不可用）` });
+      }
+      item.createSpan({ cls: "mind-trace-observation-source-generated", text: ` · ${this.observationGeneratedText(source.generatedAt)}` });
+    }
+  }
+  renderObservationGrowthTrace(shell, maturity) {
+    const growth = shell.createEl("section", { cls: "mind-trace-observation-growth", attr: { "aria-labelledby": "mind-trace-observation-growth-title" } });
+    growth.createDiv({ cls: "mind-trace-observation-section-title", text: "观照成长描线", attr: { id: "mind-trace-observation-growth-title", role: "heading", "aria-level": "2" } });
+    growth.createEl("p", { cls: "mind-trace-observation-section-note", text: `客观累计：${maturity.eligibleReportCount} 份可解析回顾 · ${maturity.independentPeriodCount} 个互不重叠的完整周期 · ${maturity.allUniqueEvidenceDateCount} 个证据日期（高阶段计 ${maturity.uniqueEvidenceDateCount} 个）· 证据跨度 ${maturity.evidenceSpanDays} 天。` });
+    const list = growth.createDiv({ cls: "mind-trace-observation-growth-list" });
+    const stages = [
+      { id: "initial", label: "初次观照", title: "摘要、初现线索与三种基础视角", copy: "摘要、初现线索、事实 / 情绪 / 行为视角、证据日期、自我问题和下一小步。" },
+      { id: "cross_period", label: "跨周期观照", title: "跨周期变化与待验证假设", copy: "在互不重叠的完整周期之间描出变化，加入替代解释与可继续追问的问题。" },
+      { id: "continuous", label: "持续观照", title: "持续变化与近期角色", copy: "在更长时间跨度上标出持续出现的变化与近期承担的生活角色线索，仍不定义身份。" }
+    ];
+    const rank = { initial: 0, cross_period: 1, continuous: 2 };
+    const currentRank = rank[maturity.stage] ?? 0;
+    for (const stage of stages) {
+      const stageRank = rank[stage.id];
+      const hasInitialEvidence = Number(maturity.eligibleReportCount) > 0;
+      const unlocked = stage.id === "initial" ? hasInitialEvidence && stageRank <= currentRank : stageRank <= currentRank;
+      const current = stage.id === "initial" ? hasInitialEvidence && stageRank === currentRank : stageRank === currentRank;
+      const stateClass = current ? "is-current" : unlocked ? "is-complete" : "is-next";
+      const card = list.createEl("article", { cls: `mind-trace-observation-growth-card ${unlocked ? "is-unlocked" : "is-locked"} ${stateClass}` });
+      const top = card.createDiv({ cls: "mind-trace-observation-growth-top" });
+      top.createSpan({ cls: "mind-trace-observation-growth-mark", text: unlocked ? (current ? "现在" : "已达") : "下一步", attr: { "aria-hidden": "true" } });
+      top.createSpan({ cls: "mind-trace-observation-growth-label", text: stage.label });
+      card.createDiv({ cls: "mind-trace-observation-growth-title", text: stage.title });
+      card.createEl("p", { cls: "mind-trace-observation-growth-copy", text: stage.copy });
+      let requirement = "已解锁";
+      if (!unlocked) {
+        if (stage.id === "cross_period") {
+          const periods = Math.max(0, Number(maturity.remaining.crossPeriodPeriods) || 0);
+          const evidenceDates = Math.max(0, Number(maturity.remaining.crossPeriodEvidenceDates) || 0);
+          const conditions = [];
+          if (periods > 0) conditions.push(`${periods} 个互不重叠的完整周期`);
+          if (evidenceDates > 0) conditions.push(`${evidenceDates} 个选中来源证据日期`);
+          requirement = `再积累 ${conditions.length > 0 ? conditions.join("与") : "所需的完整周期与证据日期"}即可解锁跨周期观照`;
+        } else if (stage.id === "continuous") {
+          const periods = Math.max(0, Number(maturity.remaining.continuousPeriods) || 0);
+          const evidenceDates = Math.max(0, Number(maturity.remaining.continuousEvidenceDates) || 0);
+          const spanDays = Math.max(0, Number(maturity.remaining.continuousSpanDays) || 0);
+          const conditions = [];
+          if (periods > 0) conditions.push(`${periods} 个完整周期`);
+          if (evidenceDates > 0) conditions.push(`${evidenceDates} 个证据日期`);
+          if (spanDays > 0) conditions.push(`${spanDays} 天跨度`);
+          requirement = `再积累 ${conditions.length > 0 ? conditions.join("、") : "所需的完整周期、证据日期与时间跨度"}即可解锁持续观照`;
+        } else {
+          requirement = maturity.eligibleReportCount > 0 ? "继续保留可解析回顾即可解锁初次观照" : "再积累 1 份可解析回顾即可解锁初次观照";
+        }
+      } else if (stage.id === "cross_period") {
+        requirement = "已满足：至少 2 个互不重叠的完整周期与 2 个选中来源证据日期";
+      } else if (stage.id === "continuous") {
+        requirement = maturity.stage === "continuous" ? "已满足：至少 4 个互不重叠的完整周期、4 个证据日期与 28 天跨度" : "已满足：持续观照条件";
+      } else if (maturity.stage === "initial") {
+        requirement = maturity.eligibleReportCount > 0 ? "已满足：至少 1 份可解析回顾（部分周期可以作为初次观照来源）" : "已满足：初次观照条件";
+      }
+      card.createDiv({ cls: "mind-trace-observation-growth-requirement", text: requirement });
+    }
+  }
+  renderObservationFreshness(hero, snapshot, reports) {
+    const paths = new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));
+    const freshness = deriveObservationFreshness(snapshot, reports, paths);
+    if (!freshness.stale) return freshness;
+    const notice = hero.createDiv({ cls: "mind-trace-observation-freshness", attr: { role: "status", "aria-live": "polite" } });
+    notice.createDiv({ cls: "mind-trace-observation-freshness-title", text: freshness.hasNewEvidence ? "有新的依据" : "来源有变化" });
+    notice.createEl("p", { text: freshness.reason || "观照来源发生了变化。已保存的观照仍可查看。" });
+    const update = notice.createEl("button", { cls: "mod-cta", text: "手动更新观照", attr: { type: "button" } });
+    update.disabled = !this.plugin.isProviderConfigured() || reports.length === 0;
+    update.addEventListener("click", () => this.regenerateObservation(true));
+    return freshness;
+  }
+  renderObservation(container) {
+    const shell = container.createDiv({ cls: "mind-trace-page-shell mind-trace-observation-page" });
+    const heading = shell.createDiv({ cls: "mind-trace-page-heading" });
+    heading.createDiv({ cls: "mind-trace-eyebrow", text: "观照 · 不是定论" });
+    heading.createDiv({ cls: "mind-trace-page-title", text: "最近的我，出现了哪些值得我自己验证的变化？", attr: { role: "heading", "aria-level": "1" } });
+    heading.createEl("p", { text: "把近期回顾里的线索描出来，保留复杂性，也把最后的判断交还给你。" });
+    if (this.observationLoading) {
+      this.renderObservationStatus(shell, "loading");
+      return;
+    }
+    if (this.observationReports === null) {
+      this.renderObservationStatus(shell, "loading");
+      if (!this.observationLoading) void this.loadObservationReports();
+      return;
+    }
+    const snapshot = normalizeSelfObservation(this.plugin.settings.selfObservation);
+    const maturity = snapshot.analysis !== null ? observationSnapshotMaturity(snapshot) : computeObservationMaturity(this.observationReports);
+    if (this.observationReports.length === 0) {
+      if (snapshot.analysis !== null) {
+        this.renderObservationSnapshot(shell, snapshot, [], maturity);
+      } else if (this.observationError.length > 0) {
+        this.renderObservationStatus(shell, "error");
+      } else {
+        this.renderObservationStatus(shell, "missing");
+      }
+      return;
+    }
+    if (snapshot.analysis === null) {
+      if (this.observationError.length > 0) {
+        this.renderObservationStatus(shell, "error");
+      } else if (!this.plugin.isProviderConfigured()) {
+        this.renderObservationStatus(shell, "unconfigured");
+      } else {
+        this.renderObservationStatus(shell, "empty");
+      }
+      this.renderObservationGrowthTrace(shell, maturity);
+      this.renderObservationSourceDetails(shell, this.observationSourceDescriptors(this.observationReports));
+      return;
+    }
+    this.renderObservationSnapshot(shell, snapshot, this.observationReports, maturity);
+  }
+  renderObservationSnapshot(shell, snapshot, reports, maturity = observationSnapshotMaturity(snapshot)) {
+    const sources = snapshot.sources.length > 0 ? snapshot.sources : this.observationSourceDescriptors(reports);
+    const analysis = constrainObservationAnalysisForMaturity(snapshot.analysis, maturity);
+    const hero = shell.createEl("section", { cls: "mind-trace-observation-hero" });
+    const heroMeta = hero.createDiv({ cls: "mind-trace-observation-meta" });
+    const starts = sources.map((source) => source.periodStart).filter(Boolean).sort();
+    const ends = sources.map((source) => source.periodEnd).filter(Boolean).sort();
+    heroMeta.createSpan({ text: starts.length > 0 && ends.length > 0 ? `${starts[0]} — ${ends[ends.length - 1]}` : "来源周期未记录" });
+    heroMeta.createSpan({ text: `${sources.filter((source) => source.type === "weekly").length} 份周报 · ${sources.filter((source) => source.type === "monthly").length} 份月报` });
+    heroMeta.createSpan({ text: this.observationGeneratedText(snapshot.generatedAt) });
+    hero.createDiv({ cls: "mind-trace-observation-summary", text: analysis.summary, attr: { role: "heading", "aria-level": "2" } });
+    this.renderObservationFreshness(hero, snapshot, reports);
+    const heroActions = hero.createDiv({ cls: "mind-trace-actions mind-trace-observation-actions" });
+    const regenerate = heroActions.createEl("button", { cls: "mod-cta", text: "重新观照", attr: { type: "button" } });
+    regenerate.disabled = !this.plugin.isProviderConfigured();
+    regenerate.addEventListener("click", () => this.regenerateObservation(true));
+    const remove = heroActions.createEl("button", { text: "删除这次观照", attr: { type: "button" } });
+    remove.addEventListener("click", () => {
+      openMindTraceOperation(this.app, this.plugin, {
+        eyebrow: "观照 · 删除确认",
+        title: "删除这次观照？",
+        description: "只删除本地保存的观照与校准反馈，不删除任何来源报告。",
+        confirmLabel: "删除观照",
+        warning: true,
+        run: async () => {
+          await this.plugin.deleteSelfObservation();
+          this.observationReports = null;
+          this.observationState = null;
+        },
+        onSuccess: () => this.render(true),
+        successTitle: "这次观照已删除",
+        successDetail: "来源报告仍然保留。",
+        backgroundSuccess: "这次观照已删除"
+      });
+    });
+    this.renderObservationGrowthTrace(shell, maturity);
+    const trace = shell.createEl("section", { cls: "mind-trace-observation-trace" });
+    trace.createDiv({ cls: "mind-trace-observation-section-title", text: "变化描线", attr: { role: "heading", "aria-level": "2" } });
+    trace.createEl("p", { cls: "mind-trace-observation-section-note", text: "按单次差异、重复变化、稳定变化排列。线索强度由证据日期本地计算，不代表结论。" });
+    const stages = trace.createDiv({ cls: "mind-trace-observation-stages", attr: { "aria-hidden": "true" } });
+    for (const label of ["单次差异", "重复变化", "稳定变化"]) stages.createSpan({ text: label });
+    const traceList = trace.createDiv({ cls: "mind-trace-observation-trace-list" });
+    if (analysis.changes.length === 0) traceList.createDiv({ cls: "mind-trace-observation-muted", text: "这次没有足够的变化线索，先从回顾中继续记录。" });
+    for (const item of analysis.changes) {
+      const signal = observationSignal(item.evidenceDates);
+      item.level = observationConstrainedLevel(item.level, item.evidenceDates);
+      item.signal = signal.label;
+      const row = traceList.createDiv({ cls: `mind-trace-observation-change is-${item.level}` });
+      row.createDiv({ cls: "mind-trace-observation-change-rail", attr: { "aria-hidden": "true" } }).createSpan({ cls: "mind-trace-observation-change-node" });
+      const body = row.createDiv({ cls: "mind-trace-observation-change-body" });
+      const top = body.createDiv({ cls: "mind-trace-observation-change-top" });
+      top.createSpan({ cls: "mind-trace-observation-dimension", text: item.dimension });
+      top.createSpan({ cls: "mind-trace-observation-signal", text: signal.label });
+      body.createDiv({ cls: "mind-trace-observation-change-copy", text: `${item.before} → ${item.now}` });
+      this.renderObservationEvidenceDates(body, item.evidenceDates);
+      this.renderObservationFeedback(top, "change", item, body);
+    }
+    const perspectiveSection = shell.createEl("section", { cls: "mind-trace-observation-section" });
+    perspectiveSection.createDiv({ cls: "mind-trace-observation-section-title", text: "从不同角度看", attr: { role: "heading", "aria-level": "2" } });
+    const perspectiveGrid = perspectiveSection.createDiv({ cls: "mind-trace-observation-perspective-grid" });
+    for (const item of analysis.perspectives) {
+      const card = perspectiveGrid.createEl("article", { cls: "mind-trace-observation-perspective" });
+      const title = card.createDiv({ cls: "mind-trace-observation-item-top" });
+      title.createSpan({ cls: "mind-trace-observation-perspective-name", text: item.perspective });
+      title.createSpan({ cls: `mind-trace-observation-layer is-${item.layer}`, text: item.layer });
+      card.createDiv({ cls: "mind-trace-observation-item-copy", text: item.observation });
+      card.createDiv({ cls: "mind-trace-observation-basis", text: `依据：${item.basis}` });
+      this.renderObservationEvidenceDates(card, item.evidenceDates);
+      this.renderObservationFeedback(title, "perspective", item, card);
+    }
+    if (analysis.hypotheses.length > 0) {
+      const hypothesisSection = shell.createEl("section", { cls: "mind-trace-observation-section" });
+      hypothesisSection.createDiv({ cls: "mind-trace-observation-section-title", text: "值得验证的假设", attr: { role: "heading", "aria-level": "2" } });
+      for (const item of analysis.hypotheses) {
+        const card = hypothesisSection.createEl("article", { cls: "mind-trace-observation-hypothesis" });
+        const top = card.createDiv({ cls: "mind-trace-observation-item-top" });
+        top.createSpan({ cls: "mind-trace-observation-hypothesis-label", text: item.level });
+        card.createDiv({ cls: "mind-trace-observation-item-copy", text: item.statement });
+        this.renderObservationEvidenceDates(card, item.evidenceDates);
+        card.createDiv({ cls: "mind-trace-observation-alternative", text: `另一种解释：${item.alternative}` });
+        card.createDiv({ cls: "mind-trace-observation-question", text: `可以问自己：${item.question}` });
+        this.renderObservationFeedback(top, "hypothesis", item, card);
+      }
+    }
+    if (analysis.roles.length > 0) {
+      const roleSection = shell.createEl("section", { cls: "mind-trace-observation-section" });
+      roleSection.createDiv({ cls: "mind-trace-observation-section-title", text: "最近承担的角色", attr: { role: "heading", "aria-level": "2" } });
+      roleSection.createEl("p", { cls: "mind-trace-observation-section-note", text: "这是根据记录措辞推测的生活角色线索，不是身份定义。" });
+      for (const item of analysis.roles) {
+        const row = roleSection.createDiv({ cls: "mind-trace-observation-role" });
+        const top = row.createDiv({ cls: "mind-trace-observation-item-top" });
+        top.createSpan({ cls: "mind-trace-observation-role-label", text: item.label });
+        row.createDiv({ cls: "mind-trace-observation-item-copy", text: item.observation });
+        this.renderObservationEvidenceDates(row, item.evidenceDates);
+        this.renderObservationFeedback(top, "role", item, row);
+      }
+    }
+    const closing = shell.createEl("section", { cls: "mind-trace-observation-closing" });
+    closing.createDiv({ cls: "mind-trace-observation-section-title", text: "接下来的一小步", attr: { role: "heading", "aria-level": "2" } });
+    closing.createDiv({ cls: "mind-trace-observation-next-step", text: analysis.nextStep });
+    closing.createDiv({ cls: "mind-trace-observation-self-question", text: `留给自己：${analysis.selfQuestion}` });
+    this.renderObservationSourceDetails(shell, sources);
+  }
+  regenerateObservation(overwrite = false) {
+    if (this.observationReports === null || this.observationReports.length === 0) {
+      return;
+    }
+    if (!this.plugin.isProviderConfigured()) {
+      this.plugin.openSettings();
+      return;
+    }
+    openMindTraceOperation(this.app, this.plugin, {
+      eyebrow: "心迹 · 观照",
+      title: overwrite ? "重新观照？" : "开始观照？",
+      description: "只会发送最近周报与月报中的分析字段；现有观照会被新的结果替换。",
+      confirm: overwrite,
+      confirmLabel: overwrite ? "重新观照" : "开始观照",
+      warning: overwrite,
+      run: async () => {
+        this.observationLoading = true;
+        this.observationError = "";
+        this.render(true);
+        const snapshot = await this.plugin.generateSelfObservation(this.observationReports);
+        this.observationLoading = false;
+        return snapshot;
+      },
+      onSuccess: (snapshot) => {
+        this.observationLoading = false;
+        this.observationReports = this.observationReports ?? [];
+        this.render(true);
+        return snapshot;
+      },
+      onError: (error) => {
+        this.observationLoading = false;
+        this.observationError = errorMessage(error);
+        this.render(true);
+      },
+      successTitle: "观照已经生成",
+      successDetail: "你可以逐条确认、修正或否认这些线索。",
+      backgroundSuccess: "观照已经生成"
+    });
+  }
+  observationPendingCount(snapshot, maturity = observationSnapshotMaturity(snapshot)) {
+    const analysis = snapshot?.analysis ? constrainObservationAnalysisForMaturity(snapshot.analysis, maturity) : null;
+    if (analysis === null || typeof analysis !== "object") return 0;
+    return ["changes", "perspectives", "hypotheses", "roles"].reduce((sum, section) => {
+      for (const item of Array.isArray(analysis[section]) ? analysis[section] : []) {
+        const key = typeof item?.key === "string" ? item.key : "";
+        if (key.length === 0 || this.observationFeedback(key).status === "pending") sum += 1;
+      }
+      return sum;
+    }, 0);
+  }
+  renderObservationDashboardCard(container) {
+    const card = container.createEl("section", { cls: "mind-trace-home-section mind-trace-observation-dashboard-card", attr: { "aria-labelledby": "mind-trace-observation-dashboard-title" } });
+    this.observationDashboardCardEl = card;
+    card.classList.remove("is-copy-roomy", "is-copy-compact");
+    const header = card.createDiv({ cls: "mind-trace-observation-dashboard-head" });
+    header.createDiv({ cls: "mind-trace-home-section-title", text: "观照", attr: { id: "mind-trace-observation-dashboard-title", role: "heading", "aria-level": "2" } });
+    header.createSpan({ cls: "mind-trace-observation-dashboard-eyebrow", text: "证据成长描线" });
+    const body = card.createDiv({ cls: "mind-trace-observation-dashboard-body" });
+    const snapshot = normalizeSelfObservation(this.plugin.settings.selfObservation);
+    const reportState = this.observationLoading || this.observationReports === null ? "loading" : this.observationError.length > 0 ? "error" : this.observationReports.length === 0 ? "missing" : snapshot.analysis === null ? "empty" : "ready";
+    if (reportState !== "ready") {
+      body.classList.add("is-state");
+    }
+    if (reportState === "loading") {
+      body.createDiv({ cls: "mind-trace-observation-dashboard-status", text: "正在读取回顾来源…", attr: { role: "status", "aria-live": "polite" } });
+      return card;
+    }
+    if (reportState === "error") {
+      body.createDiv({ cls: "mind-trace-observation-dashboard-status", text: "回顾来源暂时无法读取。", attr: { role: "alert" } });
+      body.createEl("p", { text: this.observationError });
+      const retry = body.createEl("button", { text: "重试读取", attr: { type: "button" } });
+      retry.addEventListener("click", () => { this.observationReports = null; void this.loadObservationReports(); });
+      return card;
+    }
+    if (reportState === "missing" && snapshot.analysis === null) {
+      body.createDiv({ cls: "mind-trace-observation-dashboard-status is-locked", text: "还没有可用的回顾" });
+      body.createEl("p", { text: "至少 1 份可解析周报或月报后，才能开始初次观照。" });
+      const go = body.createEl("button", { text: "前往回顾", attr: { type: "button" } });
+      go.addEventListener("click", () => this.setMode("reports"));
+      return card;
+    }
+    if (reportState === "empty") {
+      if (!this.plugin.isProviderConfigured()) {
+        body.createDiv({ cls: "mind-trace-observation-dashboard-status", text: "模型未配置" });
+        body.createEl("p", { text: "配置模型后，点击观照页中的按钮开始初次观照。" });
+        const setup = body.createEl("button", { text: "打开设置", attr: { type: "button" } });
+        setup.addEventListener("click", () => this.plugin.openSettings());
+      } else {
+        body.createDiv({ cls: "mind-trace-observation-dashboard-status", text: "有报告，尚未生成观照" });
+        body.createEl("p", { text: "已有可解析回顾，可以开始初次观照。" });
+        const start = body.createEl("button", { cls: "mod-cta", text: "开始初次观照", attr: { type: "button" } });
+        start.addEventListener("click", () => this.setMode("observation"));
+      }
+      return card;
+    }
+    const maturity = snapshot.analysis !== null ? observationSnapshotMaturity(snapshot) : computeObservationMaturity(this.observationReports);
+    const visibleAnalysis = snapshot.analysis === null ? null : constrainObservationAnalysisForMaturity(snapshot.analysis, maturity);
+    const paths = new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));
+    const freshness = deriveObservationFreshness(snapshot, this.observationReports, paths);
+    body.createDiv({ cls: `mind-trace-observation-dashboard-status${freshness.stale ? " is-stale" : ""}`, text: freshness.stale ? "有新的依据" : "观照已生成" });
+    const rawSummary = visibleAnalysis?.summary ?? snapshot.analysis.summary;
+    const summary = typeof rawSummary === "string" ? rawSummary : "";
+    if (summary.length < 90) {
+      card.classList.add("is-copy-roomy");
+    } else if (summary.length > 180) {
+      card.classList.add("is-copy-compact");
+    }
+    body.createDiv({ cls: "mind-trace-observation-dashboard-summary", text: summary });
+    const changes = Array.isArray(visibleAnalysis?.changes) ? visibleAnalysis.changes : [];
+    if (changes.length > 0) {
+      const clues = body.createDiv({ cls: "mind-trace-observation-dashboard-clues", attr: { "aria-label": "观照变化线索" } });
+      for (const item of changes.slice(0, 2)) {
+        const clue = clues.createDiv({ cls: "mind-trace-observation-dashboard-clue" });
+        clue.createSpan({ cls: "mind-trace-observation-dashboard-clue-dimension", text: item.dimension ?? "变化" });
+        clue.createSpan({ cls: "mind-trace-observation-dashboard-clue-value", text: `${item.before ?? "—"} → ${item.now ?? "—"}` });
+      }
+    }
+    const meta = body.createDiv({ cls: "mind-trace-observation-dashboard-meta" });
+    meta.createSpan({ text: `阶段：${maturity.stage === "continuous" ? "持续观照" : maturity.stage === "cross_period" ? "跨周期观照" : "初次观照"}` });
+    meta.createSpan({ text: `待校准 ${this.observationPendingCount(snapshot, maturity)} 项` });
+    const actions = body.createDiv({ cls: "mind-trace-observation-dashboard-actions" });
+    const view = actions.createEl("button", { cls: "mod-cta", text: "查看观照", attr: { type: "button" } });
+    view.addEventListener("click", () => this.setMode("observation"));
+    if (freshness.stale && this.plugin.isProviderConfigured() && this.observationReports.length > 0) {
+      const update = actions.createEl("button", { text: "手动更新", attr: { type: "button" } });
+      update.addEventListener("click", () => this.regenerateObservation(true));
+    }
+    return card;
+  }
   renderReports(container) {
     const shell = container.createDiv({ cls: "mind-trace-page-shell mind-trace-reports-page" });
     const heading = shell.createDiv({ cls: "mind-trace-page-heading" });
-    heading.createDiv({ cls: "mind-trace-eyebrow", text: "报告" });
+    heading.createDiv({ cls: "mind-trace-eyebrow", text: "回顾" });
     heading.createDiv({
       cls: "mind-trace-page-title",
       text: "把一段时间收拢成一张图景",
       attr: { role: "heading", "aria-level": "1" }
     });
-    heading.createEl("p", { text: "周报保留短周期脉络，月报把自然周节奏、事件与变化放在同一张图上。" });
+    heading.createEl("p", { text: "这里按自然周或自然月整理变化；要查看事件如何发生，前往轨迹。" });
+    const trajectoryButton = heading.createEl("button", { cls: "mind-trace-report-trajectory-link", text: "查看事件轨迹", attr: { type: "button" } });
+    trajectoryButton.addEventListener("click", () => this.setMode("trajectory"));
     this.renderFormationStrip(shell, collectMetrics(this.app).entries);
-    const reportTabs = shell.createDiv({ cls: "mind-trace-report-tabs", attr: { role: "tablist", "aria-label": "报告周期" } });
-    for (const [id, label] of [["weekly", "周报"], ["monthly", "月报"]]) {
-      const tab = reportTabs.createEl("button", { cls: `mind-trace-report-tab${this.reportTab === id ? " is-active" : ""}`, text: label, attr: { type: "button", role: "tab", "aria-selected": String(this.reportTab === id) } });
+    const reportTabs = shell.createDiv({ cls: "mind-trace-report-tabs", attr: { role: "tablist", "aria-label": "回顾周期" } });
+    const reportTabOptions = [["weekly", "周报"], ["monthly", "月报"]];
+    const reportTabButtons = [];
+    for (const [id, label] of reportTabOptions) {
+      const active = this.reportTab === id;
+      const tab = reportTabs.createEl("button", { cls: `mind-trace-report-tab${active ? " is-active" : ""}`, text: label, attr: { type: "button", role: "tab", id: `mind-trace-report-tab-${id}`, "aria-selected": String(active), "aria-controls": `mind-trace-report-panel-${id}`, tabindex: active ? "0" : "-1" } });
+      reportTabButtons.push(tab);
       tab.addEventListener("click", () => {
         this.reportTab = id;
         this.render(true);
       });
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+          return;
+        }
+        event.preventDefault();
+        const currentIndex = reportTabButtons.indexOf(tab);
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? reportTabButtons.length - 1 : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + reportTabButtons.length) % reportTabButtons.length;
+        const next = reportTabButtons[nextIndex];
+        this.reportTab = reportTabOptions[nextIndex][0];
+        this.render(true);
+        window.requestAnimationFrame(() => {
+          const target = this.containerEl.children[1]?.querySelector(`#mind-trace-report-tab-${reportTabOptions[nextIndex][0]}`);
+          if (target instanceof HTMLElement) target.focus();
+        });
+      });
+    }
+    const reportPanel = shell.createDiv({
+      cls: "mind-trace-report-panel",
+      attr: {
+        role: "tabpanel",
+        id: `mind-trace-report-panel-${this.reportTab}`,
+        "aria-labelledby": `mind-trace-report-tab-${this.reportTab}`
+      }
+    });
+    for (const [id] of reportTabOptions) {
+      if (id === this.reportTab) continue;
+      shell.createDiv({
+        cls: "mind-trace-report-panel is-inactive",
+        attr: {
+          role: "tabpanel",
+          id: `mind-trace-report-panel-${id}`,
+          "aria-labelledby": `mind-trace-report-tab-${id}`,
+          hidden: "true"
+        }
+      });
     }
     if (this.reportTab === "monthly") {
-      this.renderMonthlyReports(shell);
+      this.renderMonthlyReports(reportPanel);
       return;
     }
     const current = currentWeekPeriod();
-    const currentWeek = shell.createDiv({ cls: "mind-trace-current-week-report" });
+    const currentWeek = reportPanel.createDiv({ cls: "mind-trace-current-week-report" });
     const currentCopy = currentWeek.createDiv();
     currentCopy.createDiv({ cls: "mind-trace-home-section-title", text: "本周周报", attr: { role: "heading", "aria-level": "2" } });
     currentCopy.createEl("p", { text: `${current.start.slice(5).replace("-", "/")} — ${current.end.slice(5).replace("-", "/")} · 把当前周尚未结束的日记也纳入统计，生成本周版本。` });
@@ -8622,11 +10661,10 @@ var JournalView = class extends import_obsidian4.ItemView {
       attr: { type: "button" }
     });
     currentButton.addEventListener("click", () => this.generateCurrentWeekReport());
-    const lead = shell.createDiv({ cls: "mind-trace-home-lead-grid" });
+    const lead = reportPanel.createDiv({ cls: "mind-trace-home-lead-grid" });
     this.renderWeeklyReportCard(lead);
-    this.renderReportStatsCard(lead);
     void this.loadWeeklyReportCard();
-    const section = shell.createEl("section", { cls: "mind-trace-reports-list-section" });
+    const section = reportPanel.createEl("section", { cls: "mind-trace-reports-list-section" });
     section.createDiv({
       cls: "mind-trace-home-section-title",
       text: "全部周报",
@@ -8674,11 +10712,7 @@ var JournalView = class extends import_obsidian4.ItemView {
         cls: "mind-trace-home-sessions",
         text: `${item.days} 天 · ${item.sessions} 篇`
       });
-      main.createSpan({
-        cls: "mind-trace-home-row-arrow",
-        text: "→",
-        attr: { "aria-hidden": "true" }
-      });
+      (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
       const open = () => void this.openWeeklyReportFile(item.file.path);
       row.addEventListener("click", open);
       row.addEventListener("keydown", (event) => {
@@ -8701,7 +10735,6 @@ var JournalView = class extends import_obsidian4.ItemView {
     currentButton.addEventListener("click", () => this.generateCurrentMonthReport(currentPreviewFile));
     const lead = shell.createDiv({ cls: "mind-trace-home-lead-grid" });
     this.renderMonthlyReportCard(lead);
-    this.renderReportStatsCard(lead);
     void this.loadMonthlyReportCard();
     const section = shell.createEl("section", { cls: "mind-trace-reports-list-section" });
     section.createDiv({ cls: "mind-trace-home-section-title", text: "全部月报", attr: { role: "heading", "aria-level": "2" } });
@@ -8725,7 +10758,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       if (item.status === "partial") main.createSpan({ cls: "mind-trace-report-badge", text: "截至今天" });
       main.createSpan({ cls: "mind-trace-report-row-summary mind-trace-report-list-summary", text: "正在读取摘要…" });
       main.createSpan({ cls: "mind-trace-home-sessions", text: `${item.days} 天 · ${item.sessions} 篇 · ${item.activeWeeks} 周` });
-      main.createSpan({ cls: "mind-trace-home-row-arrow", text: "→", attr: { "aria-hidden": "true" } });
+      (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
       const open = () => void this.openWeeklyReportFile(item.file.path);
       row.addEventListener("click", open);
       row.addEventListener("keydown", (event) => {
@@ -8758,13 +10791,62 @@ var JournalView = class extends import_obsidian4.ItemView {
     heading.createDiv({ cls: "mind-trace-eyebrow", text: "轨迹" });
     heading.createDiv({
       cls: "mind-trace-page-title",
-      text: "按时间找回过去",
+      text: "沿着事件找回事情如何发生",
       attr: { role: "heading", "aria-level": "1" }
     });
-    heading.createEl("p", { text: "通过日历、日记与本地全文检索回看过去。" });
+    heading.createEl("p", { text: "轨迹只呈现可核验的事件、日期与实体线索；需要回看一个周期如何理解，请前往回顾。" });
+    const tabs = shell.createDiv({ cls: "mind-trace-trajectory-tabs", attr: { role: "tablist", "aria-label": "轨迹视图" } });
+    const panels = [];
+    const trajectoryTabs = [["events", "事件脉络"], ["journal", "日记与搜索"]];
+    for (const [index, [view, label]] of trajectoryTabs.entries()) {
+      const active = this.trajectoryView === view;
+      const tab = tabs.createEl("button", {
+        cls: `mind-trace-trajectory-tab${active ? " is-active" : ""}`,
+        text: label,
+        attr: { type: "button", role: "tab", id: `mind-trace-trajectory-tab-${view}`, "aria-selected": String(active), "aria-controls": `mind-trace-trajectory-panel-${view}`, tabindex: active ? "0" : "-1" }
+      });
+      const activate = (nextView) => {
+        if (this.trajectoryView === nextView) return;
+        this.trajectoryView = nextView;
+        this.render(true);
+        window.requestAnimationFrame(() => {
+          const target = this.containerEl.children[1]?.querySelector(`#mind-trace-trajectory-tab-${nextView}`);
+          if (target instanceof HTMLElement) target.focus();
+        });
+      };
+      tab.addEventListener("click", () => activate(view));
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? trajectoryTabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + trajectoryTabs.length) % trajectoryTabs.length;
+        activate(trajectoryTabs[nextIndex][0]);
+      });
+      const panel = shell.createDiv({
+        cls: `mind-trace-trajectory-panel${active ? " is-active" : ""}`,
+        attr: { role: "tabpanel", id: `mind-trace-trajectory-panel-${view}`, "aria-labelledby": `mind-trace-trajectory-tab-${view}` }
+      });
+      panel.hidden = !active;
+      panels.push([view, panel]);
+    }
+    for (const [view, panel] of panels) {
+      if (panel.hidden) {
+        continue;
+      }
+      if (view === "events") {
+        this.trajectoryEventPanelEl = panel;
+        this.renderTrajectoryEvents(panel);
+      } else {
+        this.renderTrajectoryJournalSearch(panel);
+      }
+    }
+    if (this.historySnapshot === null) {
+      void this.loadAndRenderHistory();
+    }
+  }
+  renderTrajectoryJournalSearch(panel) {
     const entries = collectMetrics(this.app).entries;
     if (entries.length === 0) {
-      const empty = shell.createDiv({ cls: "mind-trace-empty-state" });
+      const empty = panel.createDiv({ cls: "mind-trace-empty-state" });
       empty.createDiv({ cls: "mind-trace-empty-mark", text: "第一篇" });
       empty.createDiv({ cls: "mind-trace-empty-title", text: "从第一篇心迹日记开始" });
       empty.createEl("p", { text: "写完之后，这里会长出可以翻找的日历、日记和检索结果。" });
@@ -8772,7 +10854,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       button.addEventListener("click", () => this.startWizard());
       return;
     }
-    const calendarSection = shell.createEl("section", { cls: "mind-trace-home-section" });
+    const calendarSection = panel.createEl("section", { cls: "mind-trace-home-section mind-trace-trajectory-calendar" });
     calendarSection.createDiv({
       cls: "mind-trace-home-section-title",
       text: "日历",
@@ -8796,9 +10878,180 @@ var JournalView = class extends import_obsidian4.ItemView {
       }
     );
     calendar.renderYearHeatmap(entries, calendarContainer);
-    this.renderHomeList(shell);
-    this.renderHistoryCenter(shell);
-    void this.loadAndRenderHistory();
+    this.renderHomeList(panel);
+    this.renderHistoryCenter(panel);
+  }
+  renderTrajectoryEvents(panel) {
+    panel.empty();
+    panel.toggleClass("is-entity-filtered", this.trajectoryQuery.entityKey.length > 0);
+    const snapshot = this.historySnapshot;
+    if (snapshot === null) {
+      if (this.historyError.length > 0 && !this.historyLoading) {
+        const error = panel.createDiv({ cls: "mind-trace-trajectory-loading", attr: { role: "alert" } });
+        error.createDiv({ cls: "mind-trace-empty-title", text: "事件脉络暂时无法整理" });
+        error.createEl("p", { text: this.historyError });
+        const retry = error.createEl("button", { text: "重试", attr: { type: "button" } });
+        retry.addEventListener("click", () => { this.historyError = ""; this.historySnapshot = null; void this.loadAndRenderHistory(); });
+        return;
+      }
+      panel.createDiv({ cls: "mind-trace-trajectory-loading", text: this.historyLoading ? "正在整理事件脉络…" : "正在准备事件脉络…", attr: { role: "status", "aria-live": "polite" } });
+      return;
+    }
+    const records = Array.isArray(snapshot.eventRecords) ? snapshot.eventRecords : flattenHistoryEventRecords(snapshot.entries);
+    const stats = trajectoryEventStats(snapshot.entries, records);
+    const ruler = panel.createDiv({ cls: "mind-trace-trajectory-ruler", attr: { "aria-label": "轨迹概览" } });
+    const rulerItems = [
+      ["记录跨度", stats.firstDate.length > 0 ? `${stats.firstDate} — ${stats.lastDate}` : "—"],
+      ["记录日", String(stats.days)],
+      ["结构化事件", String(stats.events)],
+      ["当前连续记录", `${stats.currentStreak} 天`]
+    ];
+    for (const [label, value] of rulerItems) {
+      const item = ruler.createDiv({ cls: "mind-trace-trajectory-ruler-item" });
+      item.createSpan({ cls: "mind-trace-trajectory-ruler-label", text: label });
+      item.createEl("strong", { cls: "mind-trace-trajectory-ruler-value", text: value });
+    }
+    if (stats.longestStreak > 0) {
+      ruler.createSpan({ cls: "mind-trace-trajectory-ruler-note", text: `最长连续 ${stats.longestStreak} 天` });
+    }
+    const eventStats = snapshot.eventStats ?? { ready: 0, missing: 0, invalid: 0, noEvents: 0, total: snapshot.entries.length };
+    const incompleteSessions = Number(eventStats.missing ?? 0) + Number(eventStats.invalid ?? 0) + Number(eventStats.noEvents ?? 0);
+    if (incompleteSessions > 0) {
+      const quiet = panel.createDiv({ cls: "mind-trace-trajectory-quiet-note", attr: { role: "status" } });
+      quiet.createSpan({ text: "部分记录还没有结构化事件。" });
+      quiet.createEl("small", { text: `已整理 ${eventStats.ready ?? 0} · 待整理 ${eventStats.missing ?? 0} · 格式异常 ${eventStats.invalid ?? 0} · 无事件 ${eventStats.noEvents ?? 0}` });
+      const jump = quiet.createEl("button", { text: "切到日记与搜索", attr: { type: "button" } });
+      jump.addEventListener("click", () => { this.trajectoryView = "journal"; this.render(true); });
+    }
+    if (records.length === 0) {
+      const empty = panel.createDiv({ cls: "mind-trace-empty-state mind-trace-trajectory-empty" });
+      empty.createDiv({ cls: "mind-trace-empty-mark", text: "暂无事件" });
+      empty.createDiv({ cls: "mind-trace-empty-title", text: "还没有可核验的结构化事件" });
+      empty.createEl("p", { text: "可以先在日记与搜索中回看原始记录；这里不会自动补写事件。" });
+      const button = empty.createEl("button", { cls: "mod-cta", text: "前往日记与搜索", attr: { type: "button" } });
+      button.addEventListener("click", () => { this.trajectoryView = "journal"; this.render(true); });
+      return;
+    }
+    const layout = panel.createDiv({ cls: "mind-trace-trajectory-layout" });
+    this.renderTrajectoryFilters(layout, records);
+    const filtered = filterTrajectoryEventRecords(records, this.trajectoryQuery);
+    const results = layout.createDiv({ cls: "mind-trace-trajectory-results" });
+    const resultHeading = results.createDiv({ cls: "mind-trace-trajectory-results-heading", attr: { "aria-live": "polite" } });
+    const resultContext = resultHeading.createSpan({ cls: "mind-trace-trajectory-results-context", text: "按日期与时间展开" });
+    if (this.trajectoryQuery.entityKey.length > 0) {
+      const entity = trajectoryEntitySummaries(records).find((item) => item.key === this.trajectoryQuery.entityKey);
+      if (entity !== void 0) {
+        resultContext.textContent = `${entity.name} · ${entity.count} 次出现 · ${entity.firstDate} — ${entity.lastDate}`;
+      }
+    }
+    resultHeading.createEl("strong", { cls: "mind-trace-trajectory-results-count", text: `${filtered.length} 件事件` });
+    if (filtered.length === 0) {
+      const empty = results.createDiv({ cls: "mind-trace-trajectory-filter-empty" });
+      empty.createDiv({ cls: "mind-trace-empty-title", text: "没有符合这些筛选的事件" });
+      empty.createEl("p", { text: "清除筛选后继续沿时间脉带查看。" });
+      const clear = empty.createEl("button", { text: "清除筛选", attr: { type: "button" } });
+      clear.addEventListener("click", () => { this.trajectoryQuery = createTrajectoryQuery(); this.trajectoryVisibleCount = 40; this.render(true); });
+      return;
+    }
+    const visible = filtered.slice(0, this.trajectoryVisibleCount);
+    let monthKey = "";
+    let dayKey = "";
+    let month = null;
+    let day = null;
+    for (const record of visible) {
+      const nextMonth = record.date.slice(0, 7);
+      if (nextMonth !== monthKey) {
+        monthKey = nextMonth;
+        dayKey = "";
+        month = results.createEl("section", { cls: "mind-trace-trajectory-month" });
+        month.createDiv({ cls: "mind-trace-trajectory-month-label", text: monthLabelText(record.date), attr: { role: "heading", "aria-level": "3" } });
+        month.createDiv({ cls: "mind-trace-trajectory-ribbon" });
+      }
+      if (record.date !== dayKey) {
+        dayKey = record.date;
+        day = month.createEl("section", { cls: "mind-trace-trajectory-day" });
+        day.createDiv({ cls: "mind-trace-trajectory-day-label", text: record.date, attr: { role: "heading", "aria-level": "4" } });
+      }
+      this.renderTrajectoryEventCard(day, record, this.trajectoryQuery.entityKey);
+    }
+    if (filtered.length > this.trajectoryVisibleCount) {
+      const more = results.createEl("button", { cls: "mind-trace-trajectory-more", text: `再显示 ${Math.min(40, filtered.length - this.trajectoryVisibleCount)} 件`, attr: { type: "button" } });
+      more.addEventListener("click", () => { this.trajectoryVisibleCount += 40; this.render(true); });
+    }
+  }
+  renderTrajectoryFilters(panel, records) {
+    const controls = panel.createDiv({ cls: "mind-trace-trajectory-controls" });
+    const dateRow = controls.createDiv({ cls: "mind-trace-trajectory-filter-row" });
+    dateRow.createSpan({ cls: "mind-trace-trajectory-filter-label", text: "时间" });
+    for (const [value, label] of [["all", "全部"], ["30", "近30天"], ["90", "近90天"], ["year", "本年"]]) {
+      const chip = dateRow.createEl("button", { cls: `mind-trace-trajectory-chip${this.trajectoryQuery.datePreset === value ? " is-active" : ""}`, text: label, attr: { type: "button", "aria-pressed": String(this.trajectoryQuery.datePreset === value) } });
+      chip.addEventListener("click", () => { this.trajectoryQuery.datePreset = value; this.trajectoryVisibleCount = 40; this.render(true); });
+    }
+    const typeRow = controls.createDiv({ cls: "mind-trace-trajectory-filter-row" });
+    typeRow.createSpan({ cls: "mind-trace-trajectory-filter-label", text: "类型" });
+    const types = [...new Set(records.map((record) => record.type).filter((type) => EVENT_TYPES.includes(type)))];
+    const allTypeActive = this.trajectoryQuery.eventType === "all" && !this.trajectoryQuery.actionObstacle;
+    const allType = typeRow.createEl("button", { cls: `mind-trace-trajectory-chip${allTypeActive ? " is-active" : ""}`, text: "全部", attr: { type: "button", "aria-pressed": String(allTypeActive) } });
+    allType.addEventListener("click", () => { this.trajectoryQuery.eventType = "all"; this.trajectoryQuery.actionObstacle = false; this.trajectoryVisibleCount = 40; this.render(true); });
+    for (const type of EVENT_TYPES.filter((item) => types.includes(item))) {
+      const active = this.trajectoryQuery.eventType === type;
+      const chip = typeRow.createEl("button", { cls: `mind-trace-trajectory-chip is-event-${type}${active ? " is-active" : ""}`, text: EVENT_TYPE_LABELS[type], attr: { type: "button", "aria-pressed": String(active) } });
+      chip.addEventListener("click", () => { this.trajectoryQuery.eventType = type; this.trajectoryQuery.actionObstacle = false; this.trajectoryVisibleCount = 40; this.render(true); });
+    }
+    const quick = typeRow.createEl("button", { cls: `mind-trace-trajectory-chip is-action-obstacle${this.trajectoryQuery.actionObstacle ? " is-active" : ""}`, text: "行动与未决", attr: { type: "button", "aria-pressed": String(this.trajectoryQuery.actionObstacle) } });
+    quick.addEventListener("click", () => { this.trajectoryQuery.actionObstacle = !this.trajectoryQuery.actionObstacle; this.trajectoryQuery.eventType = "all"; this.trajectoryVisibleCount = 40; this.render(true); });
+    const entities = trajectoryEntitySummaries(records).filter((entity) => entity.count >= 2);
+    if (entities.length > 0) {
+      const entityWrap = controls.createDiv({ cls: "mind-trace-trajectory-entities" });
+      const entityLabel = entityWrap.createDiv({ cls: "mind-trace-trajectory-filter-label", text: "沿线索查看" });
+      entityLabel.setAttribute("id", "mind-trace-trajectory-entities-label");
+      const list = entityWrap.createDiv({ cls: "mind-trace-trajectory-entity-chips", attr: { role: "group", "aria-labelledby": "mind-trace-trajectory-entities-label" } });
+      const ordered = this.trajectoryEntityExpanded ? entities : entities.slice(0, 16);
+      for (const entity of ordered) {
+        const active = this.trajectoryQuery.entityKey === entity.key;
+        const chip = list.createEl("button", { cls: `mind-trace-trajectory-entity-chip${active ? " is-active" : ""}${entity.count >= 2 ? " is-recurring" : ""}`, text: `${EVENT_KIND_LABELS[entity.kind]} · ${entity.name} · ${entity.count}`, attr: { type: "button", "aria-pressed": String(active), title: `${entity.count} 件事件 · ${entity.firstDate} — ${entity.lastDate}` } });
+        chip.addEventListener("click", () => { this.trajectoryQuery.entityKey = active ? "" : entity.key; this.trajectoryVisibleCount = 40; this.render(true); });
+      }
+      if (entities.length > 16) {
+        const moreEntities = entityWrap.createEl("button", { cls: "mind-trace-trajectory-entities-more", text: this.trajectoryEntityExpanded ? "收起实体线索" : `更多实体（${entities.length - 16}）`, attr: { type: "button" } });
+        moreEntities.addEventListener("click", () => { this.trajectoryEntityExpanded = !this.trajectoryEntityExpanded; this.render(true); });
+      }
+    }
+    const active = this.trajectoryQuery.datePreset !== "all" || this.trajectoryQuery.eventType !== "all" || this.trajectoryQuery.entityKey.length > 0 || this.trajectoryQuery.actionObstacle;
+    if (active) {
+      const clear = controls.createEl("button", { cls: "mind-trace-trajectory-clear", text: "清除筛选", attr: { type: "button" } });
+      clear.addEventListener("click", () => { this.trajectoryQuery = createTrajectoryQuery(); this.trajectoryVisibleCount = 40; this.render(true); });
+    }
+  }
+  renderTrajectoryEventCard(container, record, selectedEntityKey = "") {
+    const card = container.createEl("article", { cls: `mind-trace-trajectory-event-card is-${record.type}`, attr: { role: "button", tabindex: "0", "aria-label": `打开 ${record.date} ${record.time} 的${EVENT_TYPE_LABELS[record.type] ?? "事件"}：${record.title}`, title: `${record.filePath} · session ${record.sessionIndex} · event ${record.eventIndex} · ${record.id}` } });
+    const marker = card.createDiv({ cls: "mind-trace-trajectory-event-marker", attr: { "aria-hidden": "true" } });
+    marker.createSpan({ text: record.time || "—" });
+    const body = card.createDiv({ cls: "mind-trace-trajectory-event-body" });
+    const meta = body.createDiv({ cls: "mind-trace-trajectory-event-meta" });
+    meta.createSpan({ cls: `mind-trace-trajectory-event-type is-${record.type}`, text: EVENT_TYPE_LABELS[record.type] ?? EVENT_TYPE_LABELS.other });
+    meta.createSpan({ text: EVENT_STATUS_LABELS[record.status] ?? "待确认" });
+    meta.createSpan({ text: `记录 ${record.sessionIndex + 1} · 事件 ${record.eventIndex + 1}` });
+    body.createDiv({ cls: "mind-trace-trajectory-event-title", text: record.title });
+    body.createEl("p", { cls: "mind-trace-trajectory-event-summary", text: record.summary });
+    renderEventTraces(body, record.traces, { showEvidence: false });
+    if (record.elements.length > 0) {
+      const elements = body.createDiv({ cls: "mind-trace-trajectory-event-elements", attr: { "aria-label": "事件实体" } });
+      for (const element of record.elements) {
+        const chip = elements.createSpan({ cls: `mind-trace-trajectory-event-entity is-${element.kind}${eventElementKey(element) === selectedEntityKey ? " is-selected" : ""}` });
+        chip.createSpan({ cls: "mind-trace-trajectory-event-entity-kind", text: EVENT_KIND_LABELS[element.kind] ?? EVENT_KIND_LABELS.topic });
+        chip.createSpan({ text: element.name });
+      }
+    }
+    if (record.relations.length > 0) {
+      const relations = body.createDiv({ cls: "mind-trace-trajectory-event-relations", attr: { "aria-label": "明确关系" } });
+      for (const relation of record.relations) {
+        relations.createSpan({ text: `${relation.subject.name} —${relation.label}→ ${relation.object.name}` });
+      }
+    }
+    const open = () => void this.openJournalFile(record.filePath, record.sessionIndex, record);
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
   }
   renderJournal(container) {
     const draft = this.plugin.draft ?? createDraft(this.plugin.settings);
@@ -9062,25 +11315,28 @@ var JournalView = class extends import_obsidian4.ItemView {
   renderQuestion(container, draft) {
     const coreQuestions = draftCoreQuestions(draft);
     const adaptiveQuestionLimit = draftAdaptiveQuestionLimit(draft);
-    const questionLayout = configuredQuestionLayout(
-      this.plugin.settings
-    );
     const coreQuestion = draft.step <= coreQuestions.length ? coreQuestions[draft.step - 1] : void 0;
     const question = coreQuestion ?? draft.pendingQuestion;
     const conversation = container.createEl("section", {
-      cls: questionLayout === "timeline" ? `mind-trace-conversation is-timeline ${draft.answers.length > 0 ? "has-history" : ""}` : "mind-trace-conversation is-cards"
+      cls: `mind-trace-conversation is-timeline ${draft.answers.length > 0 ? "has-history" : ""}`
     });
-    if (questionLayout === "timeline") {
-      this.renderTimelineHistory(conversation, draft);
-    }
+    const contextRail = conversation.createEl("aside", {
+      cls: "mind-trace-record-context",
+      attr: {
+        "aria-label": "本次记录进度和状态"
+      }
+    });
+    this.renderRecordContext(contextRail, draft, coreQuestions, adaptiveQuestionLimit);
+    const flow = conversation.createDiv({
+      cls: "mind-trace-record-flow"
+    });
+    this.renderTimelineHistory(flow, draft);
     if (question === null) {
-      const recovery = conversation.createDiv({
-        cls: "mind-trace-decision-card"
+      const recovery = flow.createDiv({
+        cls: "mind-trace-decision-card mind-trace-record-decision"
       });
-      recovery.createDiv({
-        cls: "mind-trace-decision-mark",
-        text: "✓"
-      });
+      const decisionMark = recovery.createDiv({ cls: "mind-trace-decision-mark", attr: { "aria-hidden": "true" } });
+      (0, import_obsidian4.setIcon)(decisionMark, "check");
       recovery.createDiv({
         cls: "mind-trace-section-kicker",
         text: "核心记录已经完成"
@@ -9114,7 +11370,7 @@ var JournalView = class extends import_obsidian4.ItemView {
       generateButton.addEventListener("click", () => {
         void this.generateEntry(draft);
       });
-      if (questionLayout === "timeline" && draft.answers.length > 0) {
+      if (draft.answers.length > 0) {
         this.scrollTimelineTo(recovery);
       }
       return;
@@ -9122,7 +11378,7 @@ var JournalView = class extends import_obsidian4.ItemView {
     const isAdaptiveQuestion = coreQuestion === void 0;
     const progress = isAdaptiveQuestion ? `个性化追问 · 第 ${draft.adaptiveCount + 1} 个` : `核心问题 ${draft.step}/${coreQuestions.length}`;
     const activeStep = isAdaptiveQuestion ? draft.adaptiveCount + 1 : draft.step;
-    const writingStage = conversation.createDiv({
+    const writingStage = flow.createDiv({
       cls: "mind-trace-writing-stage"
     });
     const margin = writingStage.createDiv({
@@ -9135,9 +11391,11 @@ var JournalView = class extends import_obsidian4.ItemView {
     index.createSpan({
       text: String(activeStep).padStart(2, "0")
     });
-    index.createSpan({
-      text: isAdaptiveQuestion ? "· 按需" : `/${String(coreQuestions.length).padStart(2, "0")}`
-    });
+    if (!isAdaptiveQuestion) {
+      index.createSpan({
+        text: `/${String(coreQuestions.length).padStart(2, "0")}`
+      });
+    }
     margin.createDiv({
       cls: "mind-trace-writing-rule"
     });
@@ -9223,8 +11481,88 @@ var JournalView = class extends import_obsidian4.ItemView {
         submit.click();
       }
     });
-    if (questionLayout === "timeline" && draft.answers.length > 0) {
+    if (draft.answers.length > 0) {
       this.scrollTimelineTo(writingStage, answer);
+    }
+  }
+  renderRecordContext(container, draft, coreQuestions, adaptiveQuestionLimit) {
+    const answered = Array.isArray(draft.answers) ? draft.answers.length : 0;
+    const coreTotal = Math.max(1, coreQuestions.length);
+    const coreAnswered = Math.min(
+      coreTotal,
+      Array.isArray(draft.answers) ? draft.answers.filter((answer) => answer?.kind === "core").length : 0
+    );
+    const activeCore = draft.step > 0 && draft.step <= coreTotal ? draft.step : Math.min(coreTotal, draft.step || 1);
+    const answeredLabel = `${answered} 个回答已保存`;
+    const heading = container.createDiv({ cls: "mind-trace-record-context-heading" });
+    heading.createDiv({
+      cls: "mind-trace-record-context-kicker",
+      text: "本次记录"
+    });
+    heading.createEl("h2", {
+      cls: "mind-trace-record-context-title",
+      text: "进度与状态"
+    });
+    const progressList = container.createEl("ol", {
+      cls: "mind-trace-record-context-progress",
+      attr: {
+        "aria-label": "记录进度"
+      }
+    });
+    const coreItem = progressList.createEl("li", {
+      cls: "mind-trace-record-context-progress-item"
+    });
+    const coreLabel = coreItem.createDiv({ cls: "mind-trace-record-context-progress-label" });
+    coreLabel.createSpan({ text: "核心问题" });
+    coreLabel.createEl("strong", { text: `${coreAnswered}/${coreTotal}` });
+    const coreProgress = coreItem.createEl("progress", {
+      attr: {
+        value: String(coreAnswered),
+        max: String(coreTotal),
+        "aria-label": `核心问题已完成 ${coreAnswered}/${coreTotal}`
+      }
+    });
+    coreProgress.createSpan({ text: `${coreAnswered}/${coreTotal}` });
+    const adaptiveItem = progressList.createEl("li", {
+      cls: "mind-trace-record-context-progress-item"
+    });
+    const adaptiveLabel = adaptiveItem.createDiv({ cls: "mind-trace-record-context-progress-label" });
+    const adaptiveCount = Math.max(0, Number(draft.adaptiveCount) || 0);
+    adaptiveLabel.createSpan({ text: "按需追问" });
+    adaptiveLabel.createEl("strong", { text: `${adaptiveCount} / 最多 ${adaptiveQuestionLimit}` });
+    const adaptiveProgress = adaptiveItem.createEl("progress", {
+      attr: {
+        value: String(Math.min(adaptiveQuestionLimit, adaptiveCount)),
+        max: String(Math.max(1, adaptiveQuestionLimit)),
+        "aria-label": `按需追问已完成 ${adaptiveCount} 个，最多 ${adaptiveQuestionLimit} 个`
+      }
+    });
+    adaptiveProgress.createSpan({ text: `${adaptiveCount} / 最多 ${adaptiveQuestionLimit}` });
+    const stateList = container.createEl("dl", {
+      cls: "mind-trace-record-context-state"
+    });
+    for (const [key, label] of [["mood", "心情"], ["energy", "精力"], ["stress", "压力"]]) {
+      const row = stateList.createDiv({ cls: `mind-trace-record-context-state-row is-${key}` });
+      row.createEl("dt", { text: label });
+      const score = Number.isFinite(draft.ratings?.[key]) ? draft.ratings[key] : "—";
+      row.createEl("dd", { text: score === "—" ? "—" : `${score}/5 · ${ratingStateWord(key, score)}` });
+    }
+    const answerCount = container.createDiv({
+      cls: "mind-trace-record-context-answer-count",
+      attr: { "aria-live": "polite" }
+    });
+    answerCount.createSpan({ text: "已保存回答" });
+    answerCount.createEl("strong", { text: String(answered) });
+    answerCount.createEl("small", { text: answeredLabel });
+    const current = container.createEl("p", {
+      cls: "mind-trace-record-context-current"
+    });
+    if (draft.pendingQuestion !== null) {
+      current.textContent = `当前为个性化追问 · 第 ${draft.adaptiveCount + 1} 个`;
+    } else if (draft.step > coreTotal) {
+      current.textContent = "核心问题已完成";
+    } else {
+      current.textContent = `当前核心问题 · 第 ${activeCore} 个`;
     }
   }
   renderTimelineHistory(container, draft) {
@@ -9463,7 +11801,7 @@ var JournalView = class extends import_obsidian4.ItemView {
     const eventsHeading = eventsSection.createDiv({ cls: "mind-trace-card-heading" });
     const eventsTitle = eventsHeading.createDiv();
     eventsTitle.createDiv({ cls: "mind-trace-card-title", text: "今天发生了什么", attr: { role: "heading", "aria-level": "2" } });
-    eventsTitle.createEl("p", { text: "已随本次整理自动提取；保存后可以在关系图中逐条校正。" });
+    eventsTitle.createEl("p", { text: "已提取事件事实、进展、明确体验与未决方向；保存后仍可逐条校正。" });
     eventsHeading.createSpan({ text: `${generatedEvents.length} 件事件 · 自动采用` });
     const eventDigest = eventsSection.createDiv({ cls: "mind-trace-event-preview-digest" });
     if (generatedEvents.length === 0) {
@@ -9472,8 +11810,10 @@ var JournalView = class extends import_obsidian4.ItemView {
       const list = eventDigest.createEl("ul");
       for (const event of generatedEvents.slice(0, 6)) {
         const item = list.createEl("li");
-        item.createEl("strong", { text: event.title });
-        item.createSpan({ text: event.arguments.slice(0, 3).map((argument) => `${argument.label}：${argument.entity.name}`).join(" · ") });
+        item.createEl("strong", { text: `${event.title} · ${EVENT_STATUS_LABELS[event.status]}` });
+        const argumentText = event.arguments.slice(0, 3).map((argument) => `${argument.label}：${argument.entity.name}`).join(" · ");
+        const traceText = event.traces.length > 0 ? `${event.traces.length} 条体验/方向线索` : "无附加体验线索";
+        item.createSpan({ text: [argumentText, traceText].filter(Boolean).join(" · ") });
       }
       if (generatedEvents.length > 6) {
         eventDigest.createEl("p", { cls: "mind-trace-event-preview-more", text: `另有 ${generatedEvents.length - 6} 件事件，将一并保存。` });
@@ -10205,10 +12545,14 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       "日记与反思",
       "决定日记保存在哪里，以及心迹如何回应你。"
     );
+    const reportFolderDescriptionUpdates = [];
     new import_obsidian5.Setting(journalSection).setName("日记目录").setDesc("心迹日记在当前 Vault 中的保存目录").addText(
       (text) => text.setPlaceholder("心迹日记").setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
         this.plugin.settings.journalFolder = value.trim();
         await this.plugin.saveSettings();
+        for (const updateDescription of reportFolderDescriptionUpdates) {
+          updateDescription();
+        }
       })
     );
     const historySetting = new import_obsidian5.Setting(journalSection).setName("参考近期日记").setDesc(
@@ -10276,7 +12620,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     );
     const analysisSection = this.createSection(
       "回顾与分析",
-      "按自然周与自然月生成结构化回顾；只有进入已解锁的心迹首页或报告页时才会请求模型。"
+      "按自然周与自然月生成结构化回顾；只有进入已解锁的心迹主页或回顾页时才会请求模型。"
     );
     new import_obsidian5.Setting(analysisSection).setName("自动补齐上周周报").setDesc(
       "每个应用会话对最近一个完整周最多自动尝试一次；生成前会联合校准未人工确认的事件并写回日记。"
@@ -10333,9 +12677,55 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       this.plugin.refreshWeeklyEventViews();
       });
     });
-    new import_obsidian5.Setting(analysisSection).setName("周报保存位置").setDesc(
-      `${this.plugin.settings.journalFolder}/报告/周报（跟随日记目录）`
-    );
+    const addReportFolderSetting = (type, name, settingKey) => {
+      const setting = new import_obsidian5.Setting(analysisSection).setName(name);
+      let text;
+      let followButton;
+      const updateDescription = () => {
+        const configured = normalizeReportFolderValue(this.plugin.settings[settingKey]);
+        let resolved;
+        try {
+          resolved = resolveReportFolder(this.plugin.settings, type);
+        } catch {
+          resolved = "无法解析（请先设置有效的日记目录）";
+        }
+        setting.setDesc(
+          `留空即可跟随日记目录；当前实际路径：${resolved}${configured.length === 0 ? "（跟随日记目录）" : ""}`
+        );
+        followButton?.setDisabled(configured.length === 0);
+      };
+      reportFolderDescriptionUpdates.push(updateDescription);
+      setting.addText((control) => {
+        text = control;
+        const current = normalizeReportFolderValue(this.plugin.settings[settingKey]);
+        this.plugin.settings[settingKey] = current;
+        control.setPlaceholder("留空以跟随日记目录").setValue(current).onChange(async (value) => {
+          const normalized = normalizeReportFolderValue(value);
+          this.plugin.settings[settingKey] = normalized;
+          if (control.getValue() !== normalized) {
+            control.setValue(normalized);
+          }
+          updateDescription();
+          await this.plugin.saveSettings();
+          this.plugin.refreshJournalViews();
+        });
+        control.inputEl.addEventListener("blur", () => {
+          control.setValue(normalizeReportFolderValue(this.plugin.settings[settingKey]));
+        });
+      });
+      setting.addButton((button) => {
+        followButton = button;
+        return button.setButtonText("跟随日记目录").onClick(async () => {
+          this.plugin.settings[settingKey] = "";
+          text?.setValue("");
+          updateDescription();
+          await this.plugin.saveSettings();
+          this.plugin.refreshJournalViews();
+        });
+      });
+      updateDescription();
+    };
+    addReportFolderSetting("weekly", "周报保存位置", "weeklyReportFolder");
     new import_obsidian5.Setting(analysisSection).setName("自动补齐上月月报").setDesc(
       "每个应用会话对最近一个完整月最多自动尝试一次；只创建缺失月报，不覆盖预览、过期或手工编辑文件。"
     ).addToggle((toggle) => toggle.setValue(this.plugin.settings.monthlyReportAutoGenerate !== false).onChange(async (value) => {
@@ -10372,9 +12762,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.plugin.refreshWeeklyEventViews();
       });
     });
-    new import_obsidian5.Setting(analysisSection).setName("月报保存位置").setDesc(
-      `${this.plugin.settings.journalFolder}/报告/月报（跟随日记目录）`
-    );
+    addReportFolderSetting("monthly", "月报保存位置", "monthlyReportFolder");
     const privacySection = this.createSection(
       "隐私与草稿",
       "心迹密码可选：设置后保护插件界面，不会加密 Vault 中的 Markdown 原文；未完成问答保存在插件 data.json 中。"
@@ -10520,21 +12908,11 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
   renderDialogueSettings() {
     const section = this.createSection(
       "对话结构",
-      "选择提问页面的呈现方式，并安排心迹先问什么、最多再追问多少。页面布局立即生效；问题内容和数量上限用于下一篇新日记。"
+      "安排心迹先问什么、最多再追问多少。核心问题和数量上限用于下一篇新日记，按需追问会在信息足够时提前结束。"
     );
     const coreQuestions = configuredCoreQuestions(this.plugin.settings);
     const adaptiveQuestionLimit = configuredAdaptiveQuestionLimit(
       this.plugin.settings
-    );
-    const questionLayout = configuredQuestionLayout(
-      this.plugin.settings
-    );
-    new import_obsidian5.Setting(section).setName("提问页面").setDesc("卡片模式专注当前问题；时间线模式保留已经完成的问答").addDropdown(
-      (dropdown) => dropdown.addOption("cards", "访谈卡片").addOption("timeline", "对话时间线").setValue(questionLayout).onChange(async (value) => {
-        this.plugin.settings.questionLayout = value === "timeline" ? "timeline" : "cards";
-        await this.plugin.saveSettings();
-        await this.plugin.setDraft(this.plugin.draft);
-      })
     );
     new import_obsidian5.Setting(section).setName("个性化问题最大数量").setDesc("这是追问上限，不要求问满；AI 会根据信息是否充足提前停止。0 表示不追问，最多可设 5 个").addText(
       (text) => {
@@ -10999,8 +13377,15 @@ function eventMarkdownBody(events) {
     const lines = [
       `#### ${EVENT_TYPE_LABELS[event.type]}｜${eventMarkdownText(event.title)}`,
       `<!-- mind-trace-event-id: ${eventMarkdownText(id)} -->`,
-      `- 概要：${eventMarkdownText(event.summary)}`
+      `- 概要：${eventMarkdownText(event.summary)}`,
+      `- 状态｜${event.status}：${EVENT_STATUS_LABELS[event.status]}`
     ];
+    for (const trace of event.traces) {
+      lines.push(`- 线索｜${trace.kind}｜${trace.certainty}｜${EVENT_TRACE_KIND_LABELS[trace.kind]}：${eventMarkdownText(trace.text)}`);
+      if (trace.evidence.length > 0) {
+        lines.push(`  - 依据：${eventMarkdownText(trace.evidence)}`);
+      }
+    }
     for (const argument of event.arguments) {
       lines.push(`- 论元｜${argument.role}｜${eventMarkdownText(argument.label)}｜${EVENT_KIND_LABELS[argument.entity.kind]}：${eventMarkdownText(argument.entity.name)}`);
     }
@@ -11012,7 +13397,7 @@ function eventMarkdownBody(events) {
 }
 function eventMarkdownSection(events, options = {}) {
   const meta = {
-    schema: 3,
+    schema: EVENT_SCHEMA_VERSION,
     source: ["daily", "weekly", "manual"].includes(options.source) ? options.source : "daily",
     reviewed: options.reviewed === true
   };
@@ -11155,7 +13540,11 @@ function extractSections(content) {
     }
     const parts = [`日记：${diary[1].trim()}`];
     if (events?.[1] !== void 0 && !events[1].includes("今天没有提取到明确事件")) {
-      parts.push(`事件与元素：${events[1].trim()}`);
+      try {
+        parseEventSectionMeta(events[1]);
+        parts.push(`事件与元素：${events[1].trim()}`);
+      } catch {
+      }
     }
     if (action?.[1] !== void 0) {
       parts.push(`微行动：${action[1].trim()}`);
@@ -11382,12 +13771,29 @@ ${sections}`);
 };
 
 // src/weekly-report.ts
-function weeklyReportFolder(settings) {
-  const journalFolder = (0, import_obsidian6.normalizePath)(settings.journalFolder.trim());
-  if (journalFolder.length === 0 || journalFolder === "/") {
+function normalizeReportFolderValue(value) {
+  const normalized = typeof value === "string" ? (0, import_obsidian6.normalizePath)(value.trim()) : "";
+  if (normalized.length === 0 || normalized === "/" || normalized === ".") {
+    return "";
+  }
+  return normalized.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+function resolveReportFolder(settings, type = "weekly") {
+  const journalFolder = normalizeReportFolderValue(settings?.journalFolder);
+  if (journalFolder.length === 0) {
     throw new Error("日记目录不能为空");
   }
-  return `${journalFolder}/报告/周报`;
+  const reportType = type === "monthly" ? "monthly" : "weekly";
+  const settingKey = reportType === "monthly" ? "monthlyReportFolder" : "weeklyReportFolder";
+  const configured = normalizeReportFolderValue(settings?.[settingKey]);
+  if (configured.length > 0) {
+    return configured;
+  }
+  const label = reportType === "monthly" ? "月报" : "周报";
+  return (0, import_obsidian6.normalizePath)(`${journalFolder}/报告/${label}`);
+}
+function weeklyReportFolder(settings) {
+  return resolveReportFolder(settings, "weekly");
 }
 function weeklyPeriodStatus(period) {
   if (period?.status === "partial") {
@@ -11412,18 +13818,13 @@ function weeklyReportFrontmatterStatus(frontmatter) {
   return weeklyPeriodStatus({ start, end });
 }
 function weeklyReportPath(settings, period) {
-  const suffix = weeklyPeriodStatus(period) === "partial" ? "preview" : period.end;
-  return `${weeklyReportFolder(settings)}/${period.start}--${suffix}.md`;
+  return (0, import_obsidian6.normalizePath)(`${weeklyReportFolder(settings)}/${period.start}--${period.end}.md`);
 }
 function monthlyReportFolder(settings) {
-  const journalFolder = (0, import_obsidian6.normalizePath)(settings.journalFolder.trim());
-  if (journalFolder.length === 0 || journalFolder === "/") {
-    throw new Error("日记目录不能为空");
-  }
-  return `${journalFolder}/报告/月报`;
+  return resolveReportFolder(settings, "monthly");
 }
 function monthlyReportPath(settings, period) {
-  return `${monthlyReportFolder(settings)}/${period.start.slice(0, 7)}.md`;
+  return (0, import_obsidian6.normalizePath)(`${monthlyReportFolder(settings)}/${period.start.slice(0, 7)}.md`);
 }
 function scoreCell(value) {
   return value === null ? "—" : value.toFixed(1);
@@ -11448,8 +13849,15 @@ function weeklyEventSnapshotLines(source, options = {}) {
   const records = [...aggregate.records].sort((left, right) => left.date.localeCompare(right.date) || left.time.localeCompare(right.time) || left.eventIndex - right.eventIndex).flatMap((record) => {
     const lines = [
       `#### ${record.date} ${record.time} · ${EVENT_TYPE_LABELS[record.type] ?? EVENT_TYPE_LABELS.other}｜${eventMarkdownText(record.title)}`,
-      `- 概要：${eventMarkdownText(record.summary)}`
+      `- 概要：${eventMarkdownText(record.summary)}`,
+      `- 状态｜${record.status}：${EVENT_STATUS_LABELS[record.status]}`
     ];
+    for (const trace of record.traces ?? []) {
+      lines.push(`- 线索｜${trace.kind}｜${trace.certainty}｜${EVENT_TRACE_KIND_LABELS[trace.kind]}：${eventMarkdownText(trace.text)}`);
+      if (trace.evidence.length > 0) {
+        lines.push(`  - 依据：${eventMarkdownText(trace.evidence)}`);
+      }
+    }
     for (const argument of record.arguments ?? []) {
       lines.push(`- 论元｜${argument.role}｜${eventMarkdownText(argument.label)}｜${EVENT_KIND_LABELS[argument.entity.kind]}：${eventMarkdownText(argument.entity.name)}`);
     }
@@ -11726,8 +14134,10 @@ var WeeklyReportRepository = class {
               date: journal.date,
               time: session.time,
               type: event.type,
+              status: event.status,
               title: event.title,
               summary: event.summary,
+              traces: event.traces,
               arguments: event.arguments,
               relations: event.relations,
               elements: event.elements
@@ -11767,13 +14177,26 @@ var WeeklyReportRepository = class {
             eventMissingSessions.push(sourceSession);
             eventCalibrationSessions.push(sourceSession);
           } else {
-            eventInvalidSessions.push({ filePath: file.path, date: journal.date, time: session.time, sessionIndex, error: session.eventError ?? "格式无法识别" });
+            eventInvalidSessions.push({
+              filePath: file.path,
+              fileMtime: file.stat.mtime,
+              date: journal.date,
+              time: session.time,
+              sessionIndex,
+              diary: session.diary,
+              facets: session.facets,
+              events: [],
+              eventState: "invalid",
+              eventSchema: session.eventSchema,
+              eventReviewed: false,
+              error: session.eventError ?? "格式无法识别"
+            });
           }
           const rawBlock = [
             `【${journal.date} ${session.time}】`,
             `自评：心情 ${session.ratings.mood.selfScore}/5，精力 ${session.ratings.energy.selfScore}/5，压力 ${session.ratings.stress.selfScore}/5`,
             `日记：${session.diary}`,
-            session.events.length > 0 ? `事件：${session.events.map((event) => `${EVENT_TYPE_LABELS[event.type]}｜${event.title}（${event.arguments.map((argument) => `${argument.label}：${argument.entity.name}`).join("、")}）`).join("；")}` : "",
+            session.events.length > 0 ? `事件：${session.events.map((event) => `${EVENT_TYPE_LABELS[event.type]}｜${EVENT_STATUS_LABELS[event.status]}｜${event.title}（${event.arguments.map((argument) => `${argument.label}：${argument.entity.name}`).join("、")}；${event.traces.map((trace) => `${EVENT_TRACE_KIND_LABELS[trace.kind]}：${trace.text}`).join("、")}）`).join("；")}` : "",
             session.facets.length > 0 ? `切片：${session.facets.map((item) => `${item.category}：${item.summary}`).join("；")}` : "",
             session.insights.length > 0 ? `已有洞察：${session.insights.join("；")}` : "",
             session.microAction.length > 0 ? `微行动：${session.microAction}` : "",
@@ -11853,12 +14276,15 @@ var WeeklyReportRepository = class {
     };
   }
   find(settings, period) {
+    const targetStatus = weeklyPeriodStatus(period);
     const exact = this.app.vault.getAbstractFileByPath(weeklyReportPath(settings, period));
     if (exact instanceof import_obsidian6.TFile) {
-      return exact;
+      const frontmatter = this.app.metadataCache.getFileCache(exact)?.frontmatter;
+      if (frontmatter?.["mind-trace-report"] === true && frontmatter?.["report-type"] === "weekly" && weeklyReportFrontmatterStatus(frontmatter) === targetStatus) {
+        return exact;
+      }
     }
     const targetWeek = periodWeekStart(period.start) ?? period.start;
-    const targetStatus = weeklyPeriodStatus(period);
     const folder = weeklyReportFolder(settings);
     const candidates = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -11889,9 +14315,18 @@ var WeeklyReportRepository = class {
   async save(settings, source, report, overwrite = false) {
     const path = weeklyReportPath(settings, source.period);
     let existing = this.find(settings, source.period);
+    let completingPreview = false;
+    if (existing === null && weeklyPeriodStatus(source.period) === "complete") {
+      const exact = this.app.vault.getAbstractFileByPath(path);
+      const frontmatter = exact instanceof import_obsidian6.TFile ? this.app.metadataCache.getFileCache(exact)?.frontmatter : null;
+      if (exact instanceof import_obsidian6.TFile && frontmatter?.["mind-trace-report"] === true && frontmatter?.["report-type"] === "weekly" && frontmatter?.["period-start"] === source.period.start && frontmatter?.["period-end"] === source.period.end && weeklyReportFrontmatterStatus(frontmatter) === "partial") {
+        existing = exact;
+        completingPreview = true;
+      }
+    }
     const content = weeklyReportMarkdown(source, report);
     if (existing instanceof import_obsidian6.TFile) {
-      if (!overwrite) {
+      if (!overwrite && !completingPreview) {
         return existing;
       }
       if (existing.path !== path && this.app.vault.getAbstractFileByPath(path) === null && typeof this.app.vault.rename === "function") {
@@ -12068,6 +14503,50 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   }
   async saveSettings() {
     await this.persist();
+  }
+  async saveSelfObservation(snapshot) {
+    this.settings.selfObservation = normalizeSelfObservation(snapshot);
+    await this.persist();
+    this.refreshJournalViews();
+  }
+  async saveObservationFeedback(key, feedback) {
+    const current = normalizeSelfObservation(this.settings.selfObservation);
+    if (typeof key !== "string" || key.length === 0) {
+      return;
+    }
+    const status = ["confirmed", "rejected", "pending"].includes(feedback?.status) ? feedback.status : "pending";
+    current.feedback[key] = {
+      status,
+      correction: typeof feedback?.correction === "string" ? feedback.correction.slice(0, 800) : "",
+      updatedAt: /* @__PURE__ */ new Date().toISOString()
+    };
+    this.settings.selfObservation = current;
+    await this.persist();
+    this.refreshJournalViews();
+  }
+  async deleteSelfObservation() {
+    this.settings.selfObservation = emptySelfObservation();
+    await this.persist();
+    this.refreshJournalViews();
+  }
+  async generateSelfObservation(reports) {
+    if (!Array.isArray(reports) || reports.length === 0) {
+      throw new Error("至少需要 1 份可解析回顾才能生成观照");
+    }
+    const maturity = computeObservationMaturity(reports);
+    const current = normalizeSelfObservation(this.settings.selfObservation);
+    const feedbackContext = observationFeedbackContext(current.analysis, current.feedback);
+    const analysis = await generateObservation(this.createProvider(), reports, feedbackContext, maturity);
+    const snapshot = {
+      version: 1,
+      generatedAt: /* @__PURE__ */ new Date().toISOString(),
+      sources: reports.map((item) => ({ type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt })),
+      maturity,
+      analysis,
+      feedback: current.feedback
+    };
+    await this.saveSelfObservation(snapshot);
+    return snapshot;
   }
   async saveProviderSettings() {
     this.settings.credentialInitialized = true;
@@ -12246,7 +14725,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       const report = await generateWeeklyReport(this.createProvider(), source, this.settings);
       onProgress?.({ stage: 6, total: 8, title: "保存周报", detail: "正在把周报写入本地 Vault。" });
       const file = await this.weeklyReportRepository.save(this.settings, source, report, overwrite);
-      onProgress?.({ stage: 7, total: 8, title: "构建图谱数据", detail: "正在重新汇总事件、实体和明确关系。" });
+      onProgress?.({ stage: 7, total: 8, title: "构建图谱数据", detail: "正在重新汇总事件进展、体验/方向线索、实体和明确关系。" });
       this.emitMetricsChanged();
       return {
         kind: "ready",
@@ -12330,7 +14809,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       const report = await generateMonthlyReport(this.createProvider(), source, this.settings);
       onProgress?.({ stage: 6, total: 8, title: "保存月报", detail: "正在把月报写入本地 Vault。" });
       const file = await this.monthlyReportRepository.save(this.settings, source, report, overwrite);
-      onProgress?.({ stage: 7, total: 8, title: "构建月度图谱", detail: "正在重新汇总整月事件、实体和明确关系。" });
+      onProgress?.({ stage: 7, total: 8, title: "构建月度图谱", detail: "正在重新汇总整月事件进展、体验/方向线索、实体和明确关系。" });
       this.emitMetricsChanged();
       return { kind: "ready", period, source, file, summary: report.summary };
     })();
@@ -12340,6 +14819,55 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     } finally {
       this.monthlyReportInFlight.delete(key);
     }
+  }
+  async regenerateInvalidEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 4 }) {
+    const mutable = source.eventInvalidSessions;
+    if (mutable.length === 0) {
+      return source;
+    }
+    const monthly = source.period.type === "monthly";
+    const grouped = /* @__PURE__ */ new Map();
+    for (const session of mutable) {
+      const week = periodWeekStart(session.date) ?? session.date;
+      const values = grouped.get(week) ?? [];
+      values.push(session);
+      grouped.set(week, values);
+    }
+    const readySessions = [
+      ...source.eventReviewedSessions,
+      ...source.eventCalibrationSessions.filter((session) => session.eventState === "ready")
+    ];
+    const weeklyLimit = Number(this.settings.weeklyEventLimit) || 50;
+    const plans = [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([week, sessions]) => {
+      const preservedSessions = readySessions.filter((session) => (periodWeekStart(session.date) ?? session.date) === week);
+      const preservedCount = preservedSessions.reduce((sum, session) => sum + session.events.length, 0);
+      return { week, sessions, preservedSessions, preservedCount, maximum: Math.max(0, weeklyLimit - preservedCount) };
+    });
+    const fullWeek = plans.find((plan) => plan.maximum === 0);
+    if (fullWeek !== void 0) {
+      throw new Error(`${fullWeek.week} 已有 ${fullWeek.preservedCount} 件有效事件，达到每周上限；未改写结构不匹配的记录。请提高每周事件上限后重试。`);
+    }
+    const results = [];
+    onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: monthly ? "按自然周重新抽取" : "重新抽取事件", detail: monthly ? `正在依次处理 ${plans.length} 个自然周中的 ${mutable.length} 篇记录。` : `正在从 ${mutable.length} 篇记录的正文与切片重新抽取详细事件。` });
+    let segment = 0;
+    for (const plan of plans) {
+      segment += 1;
+      const knownElements = eventEntityDisambiguationProfiles(source.events.records, monthly ? 60 : 50, plan.sessions);
+      const generated = await generateEventBackfill(this.createProvider(), plan.sessions, knownElements, plan.maximum, plan.preservedSessions);
+      results.push(...generated);
+      onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: monthly ? "按自然周重新抽取" : "重新抽取事件", detail: monthly ? `已完成 ${segment}/${plans.length} 个自然周。` : `已完成 ${plan.sessions.length} 篇记录的模型抽取。` });
+    }
+    onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "校验并逐篇写回", detail: "正在校验新事件并替换对应章节；已有效事件保持不变。", current: 0, count: new Set(results.map((result) => result.source.filePath)).size });
+    const outcome = await this.repository.applyEventBackfill(results, (current, count) => {
+      onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "校验并逐篇写回", detail: "正在保存通过校验的新事件。", current, count });
+    });
+    if (outcome.failed.length > 0) {
+      const succeededFiles = new Set(outcome.succeeded.map((item) => item.filePath)).size;
+      const failedFiles = new Set(outcome.failed.map((item) => item.filePath)).size;
+      throw new Error(`批量重新生成部分完成：已写回 ${succeededFiles} 篇文件，${failedFiles} 篇未写回。${[...new Set(outcome.failed.map((failure) => failure.message))].join("；")}`);
+    }
+    onProgress?.({ stage: progressPlan.reload, total: progressPlan.total, title: "重新汇总图谱", detail: "正在读取写回后的事件并更新图谱数据。" });
+    return await (monthly ? this.monthlyReportRepository : this.weeklyReportRepository).collect(source.period);
   }
   async calibrateWeeklyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
     const mutable = source.eventCalibrationSessions;
@@ -12352,7 +14880,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       showMindTraceNotice(`本周已有 ${preserved} 件保留事件，已达到设置上限；未改写其他事件。`, 8e3);
       return source;
     }
-    const knownElements = source.events.nodes.slice(0, 80).map((node) => ({ kind: node.kind, name: node.name }));
+    const knownElements = eventEntityDisambiguationProfiles(source.events.records, 60, mutable);
     const preservedSessions = source.eventReviewedSessions;
     onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "校准图谱事件", detail: `正在统一 ${mutable.length} 篇记录中的事件、实体和关系。` });
     const results = await generateEventBackfill(this.createProvider(), mutable, knownElements, maximum, preservedSessions);
@@ -12381,7 +14909,6 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       grouped.set(week, values);
     }
     const preserved = source.eventReviewedSessions;
-    const knownElements = source.events.nodes.slice(0, 120).map((node) => ({ kind: node.kind, name: node.name }));
     const results = [];
     const expectedMtimes = new Map(source.sourceFiles.map((file) => [file.path, file.stat.mtime]));
     onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `正在依次整理 ${grouped.size} 个自然周片段。` });
@@ -12395,6 +14922,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
         onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `${week} 已有 ${preservedCount} 件人工保留事件，达到每周上限，跳过模型校准。` });
         continue;
       }
+      const knownElements = eventEntityDisambiguationProfiles(source.events.records, 60, sessions);
       const generated = await generateEventBackfill(this.createProvider(), sessions, knownElements, maximum, preservedSessions);
       results.push(...generated);
       onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `已完成 ${segment}/${grouped.size} 个自然周片段。` });
@@ -12802,7 +15330,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     if (loaded === null) {
       this.settings = structuredClone(DEFAULT_SETTINGS);
       this.draft = null;
-      await this.applyCredentialInitialization(true);
+      await this.applyCredentialInitialization(true, false);
       await this.persist();
       return;
     }
@@ -12811,6 +15339,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
     const data = loaded;
     const loadedSettings = typeof data.settings === "object" && data.settings !== null && !Array.isArray(data.settings) ? data.settings : {};
+    const hadLegacyQuestionLayout = Object.prototype.hasOwnProperty.call(loadedSettings, "questionLayout");
+    let reportFolderSettingsChanged = false;
     const providers = structuredClone(DEFAULT_SETTINGS.providers);
     if (typeof loadedSettings.providers === "object" && loadedSettings.providers !== null && !Array.isArray(loadedSettings.providers)) {
       for (const kind of Object.keys(providers)) {
@@ -12835,6 +15365,17 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       providers,
       security: mergedSecurity
     };
+    if (hadLegacyQuestionLayout) {
+      delete this.settings.questionLayout;
+    }
+    for (const key of ["weeklyReportFolder", "monthlyReportFolder"]) {
+      const normalized = normalizeReportFolderValue(this.settings[key]);
+      if (this.settings[key] !== normalized) {
+        reportFolderSettingsChanged = true;
+      }
+      this.settings[key] = normalized;
+    }
+    this.settings.selfObservation = normalizeSelfObservation(loadedSettings.selfObservation);
     this.settings.weeklyReportAutoGenerate = this.settings.weeklyReportAutoGenerate !== false;
     this.settings.weeklyReportMinimumDays = Math.min(
       7,
@@ -12862,8 +15403,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       this.draft.entryDate = draftEntryDate(this.draft);
     }
     const migrated = this.migrateLegacyCredentials();
-    await this.applyCredentialInitialization(false);
-    if (migrated) {
+    const credentialInitialized = await this.applyCredentialInitialization(false, false);
+    if (migrated || hadLegacyQuestionLayout || reportFolderSettingsChanged || credentialInitialized) {
       await this.persist();
     }
   }
@@ -12912,7 +15453,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
     return true;
   }
-  async applyCredentialInitialization(fresh) {
+  async applyCredentialInitialization(fresh, persistChanges = true) {
     const secrets = this.listSecretIds();
     if (secrets.length === 0) {
       return false;
@@ -12925,7 +15466,9 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       gemini.credentialSource = "secret-storage";
       gemini.secretId = firstKey;
       this.settings.credentialInitialized = true;
-      await this.persist();
+      if (persistChanges) {
+        await this.persist();
+      }
       return true;
     }
     const active = this.settings.providers[this.settings.activeProvider];
@@ -12938,7 +15481,9 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
     active.secretId = firstKey;
     this.settings.credentialInitialized = true;
-    await this.persist();
+    if (persistChanges) {
+      await this.persist();
+    }
     return true;
   }
   async persist() {
