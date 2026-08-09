@@ -1507,13 +1507,7 @@ var DEFAULT_SETTINGS = {
   monthlyReportAutoGenerate: true,
   monthlyReportMinimumWeeks: 4,
   monthlyGraphEventLimit: 100,
-  selfObservation: {
-    version: 1,
-    generatedAt: "",
-    sources: [],
-    analysis: null,
-    feedback: {}
-  },
+  observationFolder: "",
   security: {
     version: 1,
     salt: "",
@@ -2168,12 +2162,55 @@ var ObservationFeedbackModal = class extends import_obsidian7.Modal {
     const cancel = actions.createEl("button", { text: "取消", attr: { type: "button" } });
     cancel.addEventListener("click", () => this.close());
     const save = actions.createEl("button", { cls: "mod-cta", text: "保存校准", attr: { type: "button" } });
-    save.addEventListener("click", () => {
+    save.addEventListener("click", async () => {
       save.disabled = true;
-      this.onSave?.({ status: this.feedback.status, correction: correction.value.trim() });
-      this.close();
+      cancel.disabled = true;
+      try {
+        await this.onSave?.({ status: this.feedback.status, correction: correction.value.trim() });
+        this.close();
+      } catch (error) {
+        save.disabled = false;
+        cancel.disabled = false;
+        showMindTraceNotice(errorMessage(error), 8e3);
+      }
     });
     window.requestAnimationFrame(() => save.focus({ preventScroll: true }));
+  }
+};
+var JournalRegenerationPreviewModal = class extends import_obsidian7.Modal {
+  constructor(app, plugin, payload, onConfirm) {
+    super(app);
+    this.plugin = plugin;
+    this.payload = payload;
+    this.onConfirm = onConfirm;
+  }
+  onOpen() {
+    this.modalEl.addClass("mind-trace-journal-regeneration-modal", "mind-trace-dialog-shell");
+    this.contentEl.addClass("mind-trace-journal-regeneration-preview");
+    this.contentEl.createDiv({ cls: "mind-trace-dialog-eyebrow", text: "心迹日记 · 最新版校样" });
+    this.contentEl.createDiv({ cls: "mind-trace-dialog-title", text: this.payload.replacements.length > 1 ? `核对当天 ${this.payload.replacements.length} 次记录` : "核对这次记录" });
+    this.contentEl.createEl("p", { cls: "mind-trace-dialog-body", text: `原始问答、自评、日期和时间保持不变。确认后将替换正文、事件、切片和本次轻反思${this.payload.reviewedEventCount > 0 ? `，包括 ${this.payload.reviewedEventCount} 件人工确认事件` : ""}。` });
+    const preview = this.contentEl.createDiv({ cls: "mind-trace-journal-regeneration-preview-body" });
+    for (const replacement of this.payload.replacements) {
+      const session = regeneratedSessionValue(replacement.source, replacement.entry, replacement.assessment);
+      renderSession(preview, session, {});
+    }
+    const actions = this.contentEl.createDiv({ cls: "mind-trace-actions mind-trace-dialog-actions" });
+    const cancel = actions.createEl("button", { text: "取消", attr: { type: "button" } });
+    cancel.addEventListener("click", () => this.close());
+    const confirm = actions.createEl("button", { cls: "mod-warning", text: "确认替换", attr: { type: "button" } });
+    confirm.addEventListener("click", () => {
+      confirm.disabled = true;
+      cancel.disabled = true;
+      Promise.resolve(this.onConfirm?.(this.payload)).then(() => this.close()).catch((error) => {
+        confirm.disabled = false;
+        cancel.disabled = false;
+        showMindTraceNotice(errorMessage(error), 8e3);
+      });
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
   }
 };
 var MindTraceTaskToast = class {
@@ -2540,6 +2577,73 @@ function confirmMindTraceFileDeletion(view, label) {
   }).open();
 }
 
+var OBSERVATION_VIEW_TYPE = "mind-trace-observation-file-view";
+var SavedObservationView = class extends import_obsidian7.TextFileView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+  getViewType() { return OBSERVATION_VIEW_TYPE; }
+  getDisplayText() { return this.file?.basename ?? "心迹观照"; }
+  getIcon() { return "scan-eye"; }
+  getViewData() { return this.data; }
+  setViewData(data) { this.data = data; this.render(); }
+  clear() { this.contentEl.empty(); }
+  render() {
+    this.contentEl.empty();
+    this.contentEl.addClass("mind-trace-view", "mind-trace-saved-file-view", "mind-trace-observation-file-view");
+    if (renderPrivacyGate(this.contentEl, this.plugin)) return;
+    const shell = this.contentEl.createDiv({ cls: "mind-trace-page-shell mind-trace-observation-page" });
+    try {
+      const snapshot = parseObservationMarkdown(this.data, this.file?.path ?? "");
+      const heading = shell.createDiv({ cls: "mind-trace-page-heading" });
+      heading.createDiv({ cls: "mind-trace-eyebrow", text: snapshot.legacy ? "历史观照 · 旧版" : "观照 · Markdown" });
+      heading.createDiv({ cls: "mind-trace-page-title", text: "最近的变化全景", attr: { role: "heading", "aria-level": "1" } });
+      heading.createEl("p", { text: `${snapshot.generatedAt?.slice(0, 19).replace("T", " ") || "生成时间未记录"} · ${snapshot.sources?.length ?? 0} 份来源报告` });
+      const actions = heading.createDiv({ cls: "mind-trace-actions" });
+      const edit = actions.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
+      edit.addEventListener("click", () => { if (this.file) void this.plugin.openProtectedMarkdownSource(this.leaf, this.file); });
+      const latest = actions.createEl("button", { cls: "mod-cta", text: "基于最新来源重新观照", attr: { type: "button" } });
+      latest.addEventListener("click", async () => {
+        await this.plugin.openJournal();
+        const view = this.app.workspace.getLeavesOfType(JOURNAL_VIEW_TYPE)[0]?.view;
+        if (view instanceof JournalView) view.setMode("observation");
+      });
+      const remove = actions.createEl("button", { text: "删除", attr: { type: "button" } });
+      remove.addEventListener("click", () => {
+        if (!this.file) return;
+        openMindTraceOperation(this.app, this.plugin, { eyebrow: "观照 · 删除确认", title: "删除这份观照？", description: "只删除当前 Markdown 文件，不影响来源报告、日记或其他历史版本。", confirmLabel: "删除", warning: true, run: async () => this.plugin.deleteSelfObservation(this.file.path), onSuccess: () => this.leaf.detach(), successTitle: "观照已移到废纸篓", successDetail: "其他内容仍然保留。", backgroundSuccess: "观照已删除" });
+      });
+      const hero = shell.createEl("section", { cls: "mind-trace-observation-hero" });
+      hero.createDiv({ cls: "mind-trace-observation-summary", text: snapshot.analysis?.summary ?? "这份历史观照没有可解析概览。" });
+      if (snapshot.analysis?.schemaVersion === 2) {
+        for (const claim of snapshot.analysis.claims) {
+          const card = shell.createEl("article", { cls: `mind-trace-observation-claim is-${claim.layer}` });
+          const top = card.createDiv({ cls: "mind-trace-observation-item-top" });
+          top.createSpan({ cls: "mind-trace-observation-dimension", text: claim.dimension });
+          top.createSpan({ cls: "mind-trace-observation-layer", text: claim.layer === "fact" ? "事实" : claim.layer === "hypothesis" ? "假设" : "推断" });
+          card.createDiv({ cls: "mind-trace-observation-item-copy", text: claim.statement });
+          if (claim.before || claim.now) card.createDiv({ cls: "mind-trace-observation-change-copy", text: `${claim.before || "暂无明确对照"} → ${claim.now || "暂无明确对照"}` });
+          if (claim.alternative) card.createDiv({ cls: "mind-trace-observation-alternative", text: `另一种解释：${claim.alternative}` });
+          if (claim.missingInformation) card.createDiv({ cls: "mind-trace-observation-basis", text: `仍缺少的信息：${claim.missingInformation}` });
+          if (claim.verificationQuestion) card.createDiv({ cls: "mind-trace-observation-question", text: `可以问自己：${claim.verificationQuestion}` });
+        }
+        const closing = shell.createEl("section", { cls: "mind-trace-observation-closing" });
+        closing.createDiv({ cls: "mind-trace-observation-section-title", text: "接下来值得观察什么" });
+        closing.createDiv({ cls: "mind-trace-observation-next-step", text: snapshot.analysis.nextObservation });
+      } else {
+        shell.createEl("p", { cls: "mind-trace-observation-section-note", text: "这是从旧版 data.json 迁移的观照。编辑 Markdown 可查看和保留原始旧栏目。" });
+      }
+    } catch (error) {
+      const state = shell.createDiv({ cls: "mind-trace-observation-state", attr: { role: "alert" } });
+      state.createDiv({ cls: "mind-trace-observation-state-title", text: "这份观照无法解析" });
+      state.createEl("p", { text: `${this.file?.path ?? "未知路径"}：${errorMessage(error)}` });
+      const edit = state.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
+      edit.addEventListener("click", () => { if (this.file) void this.plugin.openProtectedMarkdownSource(this.leaf, this.file); });
+    }
+  }
+};
+
 // src/journal-view.ts
 var import_obsidian4 = require("obsidian");
 
@@ -2592,6 +2696,7 @@ var EVENT_TYPE_LABEL_VALUES = Object.fromEntries(
 );
 var EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);
 var EVENT_SCHEMA_VERSION = 4;
+var JOURNAL_SCHEMA_VERSION = 4;
 var EVENT_STATUS_LABELS = {
   occurred: "已发生",
   ongoing: "进行中",
@@ -2957,6 +3062,13 @@ function weeklyStatsText(current, previous) {
     `常见主题：${current.themes.length > 0 ? current.themes.map((item) => `${item.theme}（${item.days}天）`).join("、") : "无"}`
   ].join("\n");
 }
+function reportEventCatalog(source) {
+  return (source.events?.records ?? []).map((record, index) => ({ ...record, ref: `E${String(index + 1).padStart(3, "0")}` }));
+}
+function reportEventCatalogText(source) {
+  const catalog = reportEventCatalog(source);
+  return catalog.length > 0 ? catalog.map((event) => `${event.ref}｜${event.date} ${event.time}｜${EVENT_TYPE_LABELS[event.type]}｜${EVENT_STATUS_LABELS[event.status]}｜${event.title}：${event.summary}`).join("\n") : "无结构化事件";
+}
 function buildWeeklyReportMessages(source, settings) {
   const custom = settings.customInstructions.trim().length > 0 ? `\n用户表达偏好：${settings.customInstructions.trim()}` : "";
   return [
@@ -2965,18 +3077,18 @@ function buildWeeklyReportMessages(source, settings) {
       content: [
         "你是一位谨慎、具体的中文个人周报分析助手。",
         "只使用给定的日记和本地统计；不虚构数字、日期、原因或完成情况。",
-        "先总结状态变化，再给出有证据的可能原因，最后提出一个可在下周完成的小行动。",
-        "情绪解读必须是假设性的，同时给出支持线索和另一种可能解释，不进行心理或医学诊断。",
-        "evidenceDates 只能使用输入中出现且位于本周的 YYYY-MM-DD 日期。",
+        "这是一份记录型周报：整理本周明确发生的事情、进展、未决事项和用户明确表达的后续意向，不解释内在原因，不生成情绪假设或建议。",
+        "highlights、progress、openLoops、themes、carryForward 的 evidenceDates 只能使用本周日期，eventRefs 只能使用输入事件目录中的 E 编号。",
+        "carryForward 只能来自用户明确表达的计划、意向或未决事项；不能替用户制定行动。",
         TONE_INSTRUCTIONS[settings.reflectionTone],
         custom,
         SAFETY_INSTRUCTION,
-        '只输出 JSON：{"summary":"...","changes":[{"observation":"...","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"...","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"...","clues":["..."],"alternative":"..."},"themes":[{"name":"...","observation":"..."}],"nextStep":{"action":"...","reason":"..."},"selfQuestion":"..."}'
+        '只输出 JSON：{"summary":"...","highlights":[{"text":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"progress":[{"subject":"...","status":"started|advanced|blocked|completed|unchanged","text":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"openLoops":[{"text":"...","status":"ongoing|planned|blocked|uncertain","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"themes":[{"name":"...","observation":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"carryForward":[{"text":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}]}'
       ].join("\n")
     },
     {
       role: "user",
-      content: `报告周期：${source.period.start} 至 ${source.period.end}\n\n本地确定性统计：\n${weeklyStatsText(source.stats, source.previousStats)}\n\n日记摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
+      content: `报告周期：${source.period.start} 至 ${source.period.end}\n\n本地确定性统计：\n${weeklyStatsText(source.stats, source.previousStats)}\n\n事件目录：\n${reportEventCatalogText(source)}\n\n日记事实摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
     }
   ];
 }
@@ -3001,19 +3113,18 @@ function buildMonthlyReportMessages(source, settings) {
       content: [
         "你是一位谨慎、具体的中文个人月报分析助手。",
         "只使用给定的日记和本地统计；不虚构数字、日期、原因或完成情况。",
-        "先用月内节奏概括自然周之间的起伏，再总结变化、保留有边界的可能原因，最后提出下月最小的一步。",
-        "rhythm、changes、possibleCauses 的 evidenceDates 只能使用输入中出现且位于本月周期的 YYYY-MM-DD 日期。",
-        "情绪解读必须是假设性的，同时给出支持线索和另一种可能解释，不进行心理或医学诊断。",
-        "rhythm 至少返回一个对象，每个对象包含 observation 和 evidenceDates；themes 至少返回一个对象。",
+        "这是一份跨周结构记录：呈现自然周之间的节奏、转折、主题演变、推进与停滞，不解释内在原因，不生成情绪假设或建议。",
+        "rhythm 可以只引用日期；turningPoints、themeEvolution、threads、carryForward 必须同时引用本月日期和事件目录中的 E 编号。",
+        "turningPoints 和演变类内容必须跨至少两个日期或自然周；单周现象不能写成月度演变。",
         TONE_INSTRUCTIONS[settings.reflectionTone],
         custom,
         SAFETY_INSTRUCTION,
-        '只输出 JSON：{"summary":"...","rhythm":[{"observation":"...","evidenceDates":["YYYY-MM-DD"]}],"changes":[{"observation":"...","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"...","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"...","clues":["..."],"alternative":"..."},"themes":[{"name":"...","observation":"..."}],"nextStep":{"action":"...","reason":"..."},"selfQuestion":"..."}'
+        '只输出 JSON：{"summary":"...","rhythm":[{"observation":"...","evidenceDates":["YYYY-MM-DD"]}],"turningPoints":[{"text":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"themeEvolution":[{"name":"...","trajectory":"appeared|strengthened|weakened|continued|shifted|ended","observation":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"threads":[{"type":"goal|relationship|project|habit|other","name":"...","trajectory":"advanced|stalled|repeated|resolved|uncertain","observation":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"carryForward":[{"text":"...","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}]}'
       ].join("\n")
     },
     {
       role: "user",
-      content: `报告周期：${source.period.start} 至 ${source.period.end}（${source.period.status === "partial" ? "截至今天的部分预览" : "完整自然月"}）\n\n本地确定性统计：\n${monthlyStatsText(source.stats, source.previousStats, source.period.status)}\n\n月度节律轴：\n${rhythm || "暂无活跃自然周"}\n\n日记摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
+      content: `报告周期：${source.period.start} 至 ${source.period.end}（${source.period.status === "partial" ? "截至今天的部分预览" : "完整自然月"}）\n\n本地确定性统计：\n${monthlyStatsText(source.stats, source.previousStats, source.period.status)}\n\n月度节律轴：\n${rhythm || "暂无活跃自然周"}\n\n事件目录：\n${reportEventCatalogText(source)}\n\n日记事实摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
     }
   ];
 }
@@ -3070,8 +3181,8 @@ function eventEntityDisambiguationText(entity) {
 }
 function buildRepairMessages(raw, shape) {
   const eventSchema = '{"type":"interaction|decision|action|progress|obstacle|change|experience|intention|open_loop|other","status":"occurred|ongoing|planned|blocked|resolved|uncertain","title":"string","summary":"string","traces":[{"kind":"fact|emotion|body|thought|judgment|intention|goal|outcome|open_loop","layer":"fact|self_report|direction","certainty":"stated|uncertain","text":"string","evidence":"string"}],"arguments":[{"role":"actor|participant|counterparty|recipient|target|object|context|location|cause|outcome|related","label":"string","entity":{"kind":"person|group|organization|project|product|place|activity|object|topic","name":"string"}}],"relations":[{"type":"affiliation|social|ownership|part_of|dependency|collaboration|located_in|other","label":"string","subject":{"kind":"...","name":"string"},"object":{"kind":"...","name":"string"}}]}';
-  const schema = shape === "follow-up" ? '{"question":"string","continue":boolean}' : shape === "journal" ? `{"diary":"string","events":[${eventSchema}],"facets":[{"category":"string","summary":"string"}],"insights":["string"],"microAction":"string","selfQuestion":"string","themes":["string"]}` : shape === "event-backfill" ? `{"sessions":[{"id":"string","date":"YYYY-MM-DD","time":"HH:mm","events":[${eventSchema}]}]}` : shape === "weekly-report" ? '{"summary":"string","changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : shape === "monthly-report" ? '{"summary":"string","rhythm":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"changes":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"possibleCauses":[{"hypothesis":"string","evidenceDates":["YYYY-MM-DD"]}],"emotionReading":{"hypothesis":"string","clues":["string"],"alternative":"string"},"themes":[{"name":"string","observation":"string"}],"nextStep":{"action":"string","reason":"string"},"selfQuestion":"string"}' : shape === "observation" ? '{"summary":"string","changes":[{"dimension":"想法|行为|认知|情绪|关系|目标","before":"string","now":"string","level":"single|recurring|stable","evidenceDates":["YYYY-MM-DD"]}],"perspectives":[{"perspective":"事实|情绪|行为|关系|目标|旁观者","observation":"string","basis":"string","layer":"事实|归纳|假设","evidenceDates":["YYYY-MM-DD"]}],"hypotheses":[{"statement":"string","evidenceDates":["YYYY-MM-DD"],"alternative":"string","question":"string"}],"roles":[{"label":"string","observation":"string","evidenceDates":["YYYY-MM-DD"]}],"nextStep":"string","selfQuestion":"string"}' : '{"mood":{"score":3,"reason":"string"},"energy":{"score":3,"reason":"string"},"stress":{"score":3,"reason":"string"}}';
-  const constraints = shape === "journal" ? "events 需为 0–20 个，事件各含合法 status、0–12 个 traces、1–16 个合法 arguments 和 0–12 个 relations；trace.layer 必须与 kind 对应；facets 需有 2–6 个且 category 互不重复，insights 需根据信息量动态给出 2–4 条，themes 需有 1–5 个。只修复结构，保留原结果中的事件事实和实体命名，不在缺少上下文时重新猜测或合并实体。" : shape === "event-backfill" ? "保留 sessions 的 date 和 time，每个 events 为 0–20 个；每个事件含合法 status 与 0–12 个 traces，所有关系端点必须属于同一事件的论元。只修复结构，保留原结果中的事件事实和实体命名，不在缺少上下文时重新猜测或合并实体。" : shape === "monthly-report" ? "rhythm、changes、possibleCauses 均需为带 evidenceDates 的非空数组，日期必须位于月报周期；emotionReading、themes、nextStep 与 selfQuestion 不能为空。" : shape === "observation" ? "每个洞察必须有 evidenceDates；changes 最多 8 条，perspectives 最多 8 条，hypotheses 最多 6 条，roles 最多 5 条；hypotheses 的 alternative/question 不得为空。" : shape === "rating" ? "三个 score 均需为 1–5 的整数，每项 reason 均不能为空。" : "";
+  const schema = shape === "follow-up" ? '{"question":"string","continue":boolean}' : shape === "journal" ? `{"diary":"string","events":[${eventSchema}],"facets":[{"category":"string","summary":"string"}],"insights":["string"],"microAction":"string","selfQuestion":"string","themes":["string"]}` : shape === "event-backfill" ? `{"sessions":[{"id":"string","date":"YYYY-MM-DD","time":"HH:mm","events":[${eventSchema}]}]}` : shape === "weekly-report" ? '{"summary":"string","highlights":[{"text":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"progress":[{"subject":"string","status":"started|advanced|blocked|completed|unchanged","text":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"openLoops":[{"text":"string","status":"ongoing|planned|blocked|uncertain","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"themes":[{"name":"string","observation":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"carryForward":[{"text":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}]}' : shape === "monthly-report" ? '{"summary":"string","rhythm":[{"observation":"string","evidenceDates":["YYYY-MM-DD"]}],"turningPoints":[{"text":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"themeEvolution":[{"name":"string","trajectory":"appeared|strengthened|weakened|continued|shifted|ended","observation":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"threads":[{"type":"goal|relationship|project|habit|other","name":"string","trajectory":"advanced|stalled|repeated|resolved|uncertain","observation":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}],"carryForward":[{"text":"string","evidenceDates":["YYYY-MM-DD"],"eventRefs":["E001"]}]}' : shape === "observation" ? '{"summary":"string","claims":[{"dimension":"想法|行为|认知|情绪|关系|目标","layer":"fact|inference|hypothesis","statement":"string","before":"string","now":"string","supportEvidenceRefs":["EV001"],"counterEvidenceRefs":["EV009"],"alternative":"string","missingInformation":"string","verificationQuestion":"string"}],"nextObservation":"string"}' : '{"mood":{"score":3,"reason":"string"},"energy":{"score":3,"reason":"string"},"stress":{"score":3,"reason":"string"}}';
+  const constraints = shape === "journal" ? "events 需为 0–20 个，事件各含合法 status、0–12 个 traces、1–16 个合法 arguments 和 0–12 个 relations；trace.layer 必须与 kind 对应；facets 需有 2–6 个且 category 互不重复，insights 需根据信息量动态给出 2–4 条，themes 需有 1–5 个。只修复结构，保留原结果中的事件事实和实体命名，不在缺少上下文时重新猜测或合并实体。" : shape === "event-backfill" ? "保留 sessions 的 date 和 time，每个 events 为 0–20 个；每个事件含合法 status 与 0–12 个 traces，所有关系端点必须属于同一事件的论元。只修复结构，保留原结果中的事件事实和实体命名，不在缺少上下文时重新猜测或合并实体。" : shape === "weekly-report" ? "保留 summary，并确保 highlights、progress、openLoops、themes、carryForward 都是带 evidenceDates 与 eventRefs 的数组；不要添加原因、情绪假设、自我问题或建议。" : shape === "monthly-report" ? "rhythm 需有 evidenceDates；turningPoints、themeEvolution、threads、carryForward 需有 evidenceDates 与 eventRefs；不要添加原因、情绪假设、自我问题或建议。" : shape === "observation" ? "claims 最多 8 条，每条必须包含至少一个 supportEvidenceRefs；只允许六个 dimension 和 fact、inference、hypothesis 三个 layer；inference 与 hypothesis 的 alternative、missingInformation、verificationQuestion 不得为空；不得输出人格、疾病、受保护属性、身份定义或置信百分比。" : shape === "rating" ? "三个 score 均需为 1–5 的整数，每项 reason 均不能为空。" : "";
   return [
     {
       role: "system",
@@ -3085,7 +3196,7 @@ function buildRepairMessages(raw, shape) {
 }
 function reportObjectArray(value, key, fields) {
   const raw = value[key];
-  if (!Array.isArray(raw) || raw.length === 0) {
+  if (!Array.isArray(raw)) {
     throw new Error(`模型结果中的 ${key} 格式不正确`);
   }
   return raw.map((item) => {
@@ -3099,87 +3210,76 @@ function reportObjectArray(value, key, fields) {
     if ("evidenceDates" in item) {
       parsed.evidenceDates = stringArrayField(item, "evidenceDates");
     }
+    if ("eventRefs" in item) {
+      parsed.eventRefs = stringArrayField(item, "eventRefs");
+    }
     return parsed;
   });
 }
-function parseWeeklyReport(raw, period) {
-  const value = objectValue(raw);
-  const emotion = value.emotionReading;
-  const nextStep = value.nextStep;
-  if (typeof emotion !== "object" || emotion === null || Array.isArray(emotion) || typeof nextStep !== "object" || nextStep === null || Array.isArray(nextStep)) {
-    throw new Error("模型结果缺少周报结构");
-  }
-  const changes = reportObjectArray(value, "changes", ["observation"]);
-  const possibleCauses = reportObjectArray(value, "possibleCauses", ["hypothesis"]);
-  const emotionClues = stringArrayField(emotion, "clues");
-  if (emotionClues.length === 0) {
-    throw new Error("AI 情绪假设至少需要一条文字线索");
-  }
-  for (const item of [...changes, ...possibleCauses]) {
-    if (!Array.isArray(item.evidenceDates)) {
-      throw new Error("周报证据日期格式不正确");
+function parseReportV4Items(value, key, fields, period, validRefs, options = {}) {
+  const items = reportObjectArray(value, key, fields);
+  const result = [];
+  for (const item of items) {
+    if (!Array.isArray(item.evidenceDates)) throw new Error(`${key} 的 evidenceDates 格式不正确`);
+    const originalDates = item.evidenceDates;
+    const originalRefs = Array.isArray(item.eventRefs) ? item.eventRefs : [];
+    item.evidenceDates = [...new Set(originalDates.filter((date) => parseLocalDate(date) !== null && date >= period.start && date <= period.end))];
+    item.eventRefs = [...new Set(originalRefs.filter((ref) => typeof ref === "string" && validRefs.has(ref)))];
+    if (options.strict === true && (item.evidenceDates.length !== new Set(originalDates).size || options.allowDateOnly !== true && item.eventRefs.length !== new Set(originalRefs).size)) {
+      throw new Error(`${key} 含有周期外日期或未知事件 ID`);
     }
-    item.evidenceDates = item.evidenceDates.filter((date) => date >= period.start && date <= period.end);
+    if (item.evidenceDates.length === 0 || options.allowDateOnly !== true && item.eventRefs.length === 0) continue;
+    result.push(item);
   }
+  return result;
+}
+function parseWeeklyReport(raw, period, source, strict = false) {
+  const value = objectValue(raw);
+  const catalog = reportEventCatalog(source);
+  const validRefs = new Set(catalog.map((event) => event.ref));
+  const byRef = new Map(catalog.map((event) => [event.ref, event]));
+  const options = { strict };
+  const highlights = parseReportV4Items(value, "highlights", ["text"], period, validRefs, options);
+  const progress = parseReportV4Items(value, "progress", ["subject", "status", "text"], period, validRefs, options).filter((item) => ["started", "advanced", "blocked", "completed", "unchanged"].includes(item.status));
+  const openLoops = parseReportV4Items(value, "openLoops", ["text", "status"], period, validRefs, options).filter((item) => ["ongoing", "planned", "blocked", "uncertain"].includes(item.status));
+  const themes = parseReportV4Items(value, "themes", ["name", "observation"], period, validRefs, options);
+  const carryForward = parseReportV4Items(value, "carryForward", ["text"], period, validRefs, options).filter((item) => item.eventRefs.some((ref) => {
+    const event = byRef.get(ref);
+    return event !== void 0 && (["ongoing", "planned", "blocked", "uncertain"].includes(event.status) || ["intention", "open_loop"].includes(event.type) || event.traces?.some((trace) => ["intention", "goal", "open_loop"].includes(trace.kind)));
+  }));
+  if ([highlights, progress, openLoops, themes, carryForward].every((items) => items.length === 0)) throw new Error("模型结果没有可验证的周报条目");
   return {
     summary: stringField(value, "summary"),
-    changes,
-    possibleCauses,
-    emotionReading: {
-      hypothesis: stringField(emotion, "hypothesis"),
-      clues: emotionClues,
-      alternative: stringField(emotion, "alternative")
-    },
-    themes: reportObjectArray(value, "themes", ["name", "observation"]),
-    nextStep: {
-      action: stringField(nextStep, "action"),
-      reason: stringField(nextStep, "reason")
-    },
-    selfQuestion: stringField(value, "selfQuestion")
+    highlights,
+    progress,
+    openLoops,
+    themes,
+    carryForward
   };
 }
-function parseMonthlyReport(raw, period) {
+function parseMonthlyReport(raw, period, source, strict = false) {
   const value = objectValue(raw);
-  const emotion = value.emotionReading;
-  const nextStep = value.nextStep;
-  if (typeof emotion !== "object" || emotion === null || Array.isArray(emotion) || typeof nextStep !== "object" || nextStep === null || Array.isArray(nextStep)) {
-    throw new Error("模型结果缺少月报结构");
-  }
-  const parseEvidenceItems = (key, field) => {
-    const raw = value[key];
-    const normalized = key === "rhythm" && typeof raw === "object" && raw !== null && !Array.isArray(raw) ? [raw] : raw;
-    const items = reportObjectArray({ [key]: normalized }, key, [field]);
-    for (const item of items) {
-      if (!Array.isArray(item.evidenceDates)) {
-        throw new Error("月报证据日期格式不正确");
-      }
-      item.evidenceDates = item.evidenceDates.filter((date) => date >= period.start && date <= period.end && parseLocalDate(date) !== null);
-    }
-    return items;
-  };
-  const rhythm = parseEvidenceItems("rhythm", "observation");
-  const changes = parseEvidenceItems("changes", "observation");
-  const possibleCauses = parseEvidenceItems("possibleCauses", "hypothesis");
-  const emotionClues = stringArrayField(emotion, "clues");
-  if (emotionClues.length === 0) {
-    throw new Error("AI 情绪假设至少需要一条文字线索");
-  }
+  const catalog = reportEventCatalog(source);
+  const validRefs = new Set(catalog.map((event) => event.ref));
+  const byRef = new Map(catalog.map((event) => [event.ref, event]));
+  const rhythmValue = typeof value.rhythm === "object" && value.rhythm !== null && !Array.isArray(value.rhythm) ? { ...value, rhythm: [value.rhythm] } : value;
+  const options = { strict };
+  const rhythm = parseReportV4Items(rhythmValue, "rhythm", ["observation"], period, validRefs, { allowDateOnly: true, strict });
+  const turningPoints = parseReportV4Items(value, "turningPoints", ["text"], period, validRefs, options).filter((item) => new Set(item.evidenceDates.map((date) => periodWeekStart(date) ?? date)).size >= 2);
+  const themeEvolution = parseReportV4Items(value, "themeEvolution", ["name", "trajectory", "observation"], period, validRefs, options).filter((item) => ["appeared", "strengthened", "weakened", "continued", "shifted", "ended"].includes(item.trajectory) && new Set(item.evidenceDates.map((date) => periodWeekStart(date) ?? date)).size >= 2);
+  const threads = parseReportV4Items(value, "threads", ["type", "name", "trajectory", "observation"], period, validRefs, options).filter((item) => ["goal", "relationship", "project", "habit", "other"].includes(item.type) && ["advanced", "stalled", "repeated", "resolved", "uncertain"].includes(item.trajectory) && new Set(item.evidenceDates.map((date) => periodWeekStart(date) ?? date)).size >= 2);
+  const carryForward = parseReportV4Items(value, "carryForward", ["text"], period, validRefs, options).filter((item) => item.eventRefs.some((ref) => {
+    const event = byRef.get(ref);
+    return event !== void 0 && (["ongoing", "planned", "blocked", "uncertain"].includes(event.status) || ["intention", "open_loop"].includes(event.type));
+  }));
+  if ([rhythm, turningPoints, themeEvolution, threads, carryForward].every((items) => items.length === 0)) throw new Error("模型结果没有可验证的月报条目");
   return {
     summary: stringField(value, "summary"),
     rhythm,
-    changes,
-    possibleCauses,
-    emotionReading: {
-      hypothesis: stringField(emotion, "hypothesis"),
-      clues: emotionClues,
-      alternative: stringField(emotion, "alternative")
-    },
-    themes: reportObjectArray(value, "themes", ["name", "observation"]),
-    nextStep: {
-      action: stringField(nextStep, "action"),
-      reason: stringField(nextStep, "reason")
-    },
-    selfQuestion: stringField(value, "selfQuestion")
+    turningPoints,
+    themeEvolution,
+    threads,
+    carryForward
   };
 }
 var OBSERVATION_DIMENSIONS = ["想法", "行为", "认知", "情绪", "关系", "目标"];
@@ -3316,13 +3416,114 @@ function observationReportEvidenceDates(reports) {
     for (const date of descriptorDates) {
       if (observationDateValue(date).length > 0) dates.add(date);
     }
-    for (const item of [...(report.changes ?? []), ...(report.possibleCauses ?? []), ...(report.rhythm ?? [])]) {
+    for (const item of [...(report.changes ?? []), ...(report.possibleCauses ?? []), ...(report.rhythm ?? []), ...(report.highlights ?? []), ...(report.progress ?? []), ...(report.openLoops ?? []), ...(report.carryForward ?? []), ...(report.turningPoints ?? []), ...(report.themeEvolution ?? []), ...(report.threads ?? [])]) {
       for (const date of item.evidenceDates ?? []) {
         if (observationDateValue(date).length > 0) dates.add(date);
       }
     }
   }
   return dates;
+}
+function observationEvidenceId(record) {
+  return observationItemKey("evidence", { dimension: `${record.date}|${record.type ?? "other"}`, before: record.time, now: record.title, observation: record.summary }).replace("evidence-", "EV-");
+}
+function observationEvidenceCatalog(reports, limit = 60) {
+  const unique = new Map();
+  for (const descriptor of reports) {
+    const eventRecords = descriptor.report?.eventSnapshot?.records ?? [];
+    for (const record of eventRecords) {
+      const id = observationEvidenceId(record);
+      const current = unique.get(id);
+      const value = {
+        id,
+        date: record.date,
+        time: record.time,
+        type: record.type,
+        status: record.status,
+        title: String(record.title ?? "").slice(0, 120),
+        summary: String(record.summary ?? "").slice(0, 240),
+        quote: String(record.traces?.find((trace) => trace.evidence?.length > 0)?.evidence ?? "").slice(0, 160),
+        sourceReports: [...new Set([...(current?.sourceReports ?? []), descriptor.filePath])]
+      };
+      unique.set(id, value);
+    }
+    if (eventRecords.length === 0) {
+      const report = descriptor.report ?? {};
+      const historical = [...(report.highlights ?? []), ...(report.changes ?? []), ...(report.progress ?? []), ...(report.openLoops ?? []), ...(report.turningPoints ?? []), ...(report.themeEvolution ?? []), ...(report.threads ?? [])];
+      for (const item of historical) {
+        const date = item.evidenceDates?.find((candidate) => observationDateValue(candidate).length > 0);
+        const summary = String(item.text ?? item.observation ?? item.now ?? item.summary ?? "").trim();
+        if (!date || !summary) continue;
+        const record = { date, time: "", type: "report", title: `${descriptor.type === "monthly" ? "月报" : "周报"}线索`, summary };
+        const id = observationEvidenceId(record);
+        const current = unique.get(id);
+        unique.set(id, { id, date, time: "", type: "report", status: "occurred", title: record.title, summary: summary.slice(0, 240), quote: "", sourceReports: [...new Set([...(current?.sourceReports ?? []), descriptor.filePath])], reportLevel: true });
+      }
+    }
+  }
+  const priority = { blocked: 0, ongoing: 1, planned: 2, uncertain: 3, resolved: 4, occurred: 5 };
+  const ordered = [...unique.values()].sort((left, right) => (priority[left.status] ?? 9) - (priority[right.status] ?? 9) || right.date.localeCompare(left.date) || right.time.localeCompare(left.time));
+  const selected = [];
+  const seen = new Set();
+  for (const descriptor of reports) {
+    const item = ordered.find((candidate) => !seen.has(candidate.id) && candidate.sourceReports.includes(descriptor.filePath));
+    if (item !== void 0) { selected.push(item); seen.add(item.id); }
+    if (selected.length >= limit) return selected;
+  }
+  for (const item of ordered) {
+    if (!seen.has(item.id)) { selected.push(item); seen.add(item.id); }
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+function normalizeObservationV2(value, evidenceCatalog = []) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const summary = typeof value.summary === "string" ? value.summary.trim() : "";
+  const nextObservation = typeof value.nextObservation === "string" ? value.nextObservation.trim() : "";
+  const allowed = new Set(evidenceCatalog.map((item) => item.id));
+  const claims = Array.isArray(value.claims) ? value.claims.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const dimension = observationDimension(item.dimension);
+    const layer = ["fact", "inference", "hypothesis"].includes(item.layer) ? item.layer : "inference";
+    const statement = typeof item.statement === "string" ? item.statement.trim() : "";
+    const sensitiveText = [statement, item.before, item.now, item.alternative].filter((part) => typeof part === "string").join(" ");
+    if (/MBTI|人格|性格|星座|九型|依恋型|依戀型|高敏感|性别|性別|年龄|年齡|种族|種族|民族|国籍|國籍|宗教|政治立场|政治立場|性取向|残疾|殘疾|心理疾病|精神疾病|诊断|診斷|抑郁症|憂鬱症|焦虑症|焦慮症|躁郁|躁鬱|双相|雙相|强迫症|強迫症|创伤后|創傷後|精神分裂|自闭症|自閉症|\d+(?:\.\d+)?\s*%|百分之/i.test(sensitiveText)) return null;
+    const supportEvidenceRefs = Array.isArray(item.supportEvidenceRefs) ? [...new Set(item.supportEvidenceRefs.filter((id) => allowed.has(id)))].slice(0, 12) : [];
+    const counterEvidenceRefs = Array.isArray(item.counterEvidenceRefs) ? [...new Set(item.counterEvidenceRefs.filter((id) => allowed.has(id) && !supportEvidenceRefs.includes(id)))].slice(0, 8) : [];
+    const alternative = typeof item.alternative === "string" ? item.alternative.trim() : "";
+    const missingInformation = typeof item.missingInformation === "string" ? item.missingInformation.trim() : "";
+    const verificationQuestion = typeof item.verificationQuestion === "string" ? item.verificationQuestion.trim() : "";
+    if (statement.length === 0 || supportEvidenceRefs.length === 0) return null;
+    if (layer !== "fact" && (alternative.length === 0 || missingInformation.length === 0 || verificationQuestion.length === 0)) return null;
+    return {
+      key: typeof item.key === "string" && item.key.length > 0 ? item.key : observationItemKey("claim", { dimension, observation: statement }, index),
+      dimension, layer, statement,
+      before: typeof item.before === "string" ? item.before.trim() : "",
+      now: typeof item.now === "string" ? item.now.trim() : "",
+      supportEvidenceRefs, counterEvidenceRefs, alternative, missingInformation, verificationQuestion
+    };
+  }).filter(Boolean).slice(0, 8) : [];
+  if (summary.length === 0 || nextObservation.length === 0 || claims.length === 0) return null;
+  return { schemaVersion: 2, summary, claims, nextObservation };
+}
+function observationClaimMetrics(claim, evidence, sources) {
+  const byId = new Map(evidence.map((item) => [item.id, item]));
+  const support = claim.supportEvidenceRefs.map((id) => byId.get(id)).filter(Boolean);
+  const counter = claim.counterEvidenceRefs.map((id) => byId.get(id)).filter(Boolean);
+  const dates = [...new Set(support.map((item) => item.date))].sort();
+  const first = parseLocalDate(dates[0] ?? "");
+  const last = parseLocalDate(dates[dates.length - 1] ?? "");
+  const spanDays = first !== null && last !== null ? localDayOrdinal(last) - localDayOrdinal(first) : 0;
+  const independentPeriods = selectIndependentObservationSources(sources).filter((source) => dates.some((date) => date >= source.periodStart && date <= source.periodEnd)).length;
+  const signal = dates.length >= 4 && spanDays >= 28 ? "持续出现" : dates.length >= 2 ? "多次出现" : "初现线索";
+  const supportSourcePaths = new Set(support.flatMap((item) => item.sourceReports ?? []));
+  const supportSources = sources.filter((source) => supportSourcePaths.has(observationDescriptorPath(source)));
+  const partialOnly = supportSources.length > 0 && supportSources.every((source) => observationDescriptorStatus(source) === "partial");
+  let sufficiency = independentPeriods >= 3 && dates.length >= 4 && spanDays >= 28 ? "较充分" : independentPeriods >= 2 && dates.length >= 2 ? "中等" : "有限";
+  if (counter.length > 0 && sufficiency === "较充分") sufficiency = "中等";
+  if (partialOnly) sufficiency = "有限";
+  if (support.some((item) => item.reportLevel === true)) sufficiency = "有限";
+  return { support, counter, dates, spanDays, independentPeriods, signal, sufficiency };
 }
 function observationFeedbackContext(analysis, feedback = {}) {
   const context = {};
@@ -3508,7 +3709,7 @@ function deriveObservationFreshness(snapshot, reports, availablePaths = null) {
   const reasons = [];
   const newEvidence = current.filter((source) => {
     const saved = savedByPath.get(observationDescriptorPath(source));
-    return saved === void 0 || observationSourceSignature(saved) !== observationSourceSignature(source) || (source.generatedAt && source.generatedAt !== saved.generatedAt);
+    return saved === void 0 || observationSourceSignature(saved) !== observationSourceSignature(source) || (source.generatedAt && source.generatedAt !== saved.generatedAt) || Number(source.modifiedAt || 0) > Number(saved.modifiedAt || 0);
   });
   if (newEvidence.length > 0) reasons.push(`有 ${newEvidence.length} 份新回顾或更新的回顾`);
   const missing = savedSources.filter((source) => {
@@ -3563,65 +3764,46 @@ function buildObservationMessages(reports, feedback = {}, maturity = computeObse
   const selected = maturity?.completeIndependentSources?.length > 0 ? maturity.completeIndependentSources : [];
   const sourceLines = reports.map((descriptor) => {
     const report = descriptor.report;
-    const changes = (report.changes ?? []).slice(0, 6).map((item) => `${item.observation ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
-    const causes = (report.possibleCauses ?? []).slice(0, 4).map((item) => `${item.hypothesis ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
+    const changes = [...(report.changes ?? []), ...(report.highlights ?? []), ...(report.progress ?? []), ...(report.openLoops ?? []), ...(report.turningPoints ?? []), ...(report.themeEvolution ?? []), ...(report.threads ?? [])].slice(0, 10).map((item) => `${item.observation ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
+    const causes = (report.possibleCauses ?? []).slice(0, 4).map((item) => `${item.hypothesis ?? item.text ?? ""}（旧版分析，仅作背景）`).join("；") || "无";
     const themes = (report.themes ?? []).slice(0, 5).map((item) => `${item.name}：${item.observation}`).join("；") || "无";
     const emotion = report.emotion?.hypothesis ?? report.emotionReading?.hypothesis ?? "无";
     const rhythm = (report.rhythm ?? []).slice(0, 4).map((item) => `${item.observation ?? item.text ?? ""}（${(item.evidenceDates ?? []).join("、") || "未提供证据日期"}）`).join("；") || "无";
     const metrics = (report.metrics ?? []).slice(0, 6).map((metric) => `${metric.label ?? metric.key ?? "指标"}：本期 ${metric.current ?? "—"}；对照 ${metric.delta ?? "—"}`).join("；") || "无";
     const status = descriptor.periodStatus === "partial" ? "；周期尚未结束" : "";
     const independent = selected.some((source) => source.filePath === descriptor.filePath && source.periodStart === descriptor.periodStart && source.periodEnd === descriptor.periodEnd) ? "；可计入独立完整周期" : "";
-    return [`【${descriptor.type === "monthly" ? "月报" : "周报"} ${descriptor.periodStart} 至 ${descriptor.periodEnd}${status}${independent}】`, `摘要：${report.summary}`, `定量指标：${metrics}`, `变化：${changes}`, `可能原因：${causes}`, `情绪线索：${emotion}`, `主题：${themes}`, `节奏：${rhythm}`, `下一步：${report.nextStep?.action ?? ""}`, `自我问题：${report.selfQuestion ?? ""}`].join("\n");
+    return [`【${descriptor.type === "monthly" ? "月报" : "周报"} ${descriptor.periodStart} 至 ${descriptor.periodEnd}${status}${independent}】`, `摘要：${report.summary}`, `定量指标：${metrics}`, `事实与结构：${changes}`, `旧版分析背景：${causes}`, `旧版情绪背景：${emotion}`, `主题：${themes}`, `节奏：${rhythm}`].join("\n");
   }).join("\n\n");
+  const evidence = observationEvidenceCatalog(reports);
+  const evidenceLines = evidence.map((item) => `${item.id}｜${item.date} ${item.time}｜${EVENT_TYPE_LABELS[item.type] ?? "事件"}｜${EVENT_STATUS_LABELS[item.status] ?? item.status}｜${item.title}：${item.summary}${item.quote ? `｜短原话：${item.quote}` : ""}`).join("\n");
   const feedbackLines = Object.entries(feedback ?? {}).slice(0, 60).map(([key, item]) => `${item.type ?? "item"}｜${item.text ?? ""}｜${item.status}｜${item.correction ?? ""}｜key=${key}`).join("\n");
   return [
     {
       role: "system",
       content: [
-        "你是 Mind Trace 的观照助手。只根据用户已经生成的周报和月报做证据化、可验证的自我观察，不读取或要求原始日记。",
-        "不要定义人格、疾病、受保护属性或身份；生活角色只能写成有证据的角色线索。事实、系统归纳、待验证假设必须分层，所有洞察都要有 evidenceDates。语气证据化但有温度，不把变化评价为好或坏。",
-        "变化 dimension 只能是 想法、行为、认知、情绪、关系、目标；level 只能是 single、recurring、stable，signal 不要写百分比。perspective 只能是 事实、情绪、行为、关系、目标、旁观者；layer 只能是 事实、归纳、假设。",
+        "你是 Mind Trace 的观照助手。只根据给定报告字段、结构化事件摘要和短证据片段做可验证观察，不读取完整历史日记。",
+        "不要定义人格、疾病、受保护属性或身份。事实、归纳和待验证假设必须分层；不把变化评价为好或坏。",
+        "dimension 只能是 想法、行为、认知、情绪、关系、目标；layer 只能是 fact、inference、hypothesis。每条 claim 必须引用证据目录中的 supportEvidenceRefs。",
+        "inference 与 hypothesis 必须同时提供 alternative、missingInformation、verificationQuestion；counterEvidenceRefs 用于引用合理反例，没有时返回空数组。",
         "反馈语义：confirmed 表示用户确认符合，rejected 表示用户明确否认不符合，pending 表示用户暂保留；请尊重 rejected 与 correction，避免重复被否认的说法。",
         `成熟度统计：stage=${maturity.stage}；可解析回顾 ${maturity.eligibleReportCount} 份；选中的互不重叠完整周期 ${maturity.independentPeriodCount} 个；选中来源证据日期 ${maturity.uniqueEvidenceDateCount} 个；证据跨度 ${maturity.evidenceSpanDays} 天。周报和月报可能覆盖同一段时间，重叠不等于独立证据，报告数量不等于置信度。${observationStageRules(maturity.stage)}`,
-        "最多返回 changes 8 条、perspectives 8 条、hypotheses 6 条、roles 5 条；每条 hypothesis 必须提供 alternative/question。",
-        '只输出 JSON：{"summary":"string","changes":[{"dimension":"想法|行为|认知|情绪|关系|目标","before":"string","now":"string","level":"single|recurring|stable","evidenceDates":["YYYY-MM-DD"]}],"perspectives":[{"perspective":"事实|情绪|行为|关系|目标|旁观者","observation":"string","basis":"string","layer":"事实|归纳|假设","evidenceDates":["YYYY-MM-DD"]}],"hypotheses":[{"statement":"string","evidenceDates":["YYYY-MM-DD"],"alternative":"string","question":"string"}],"roles":[{"label":"string","observation":"string","evidenceDates":["YYYY-MM-DD"]}],"nextStep":"string","selfQuestion":"string"}'
+        "最多返回 8 条 claims。不要输出置信百分比；依据充分度由本地计算。",
+        '只输出 JSON：{"summary":"string","claims":[{"dimension":"想法|行为|认知|情绪|关系|目标","layer":"fact|inference|hypothesis","statement":"string","before":"string","now":"string","supportEvidenceRefs":["EV-..."],"counterEvidenceRefs":[],"alternative":"string","missingInformation":"string","verificationQuestion":"string"}],"nextObservation":"string"}'
       ].join("\n")
     },
     {
       role: "user",
-      content: `可用报告（只有报告分析字段，不含原始日记）：\n${sourceLines}\n\n用户之前的校准反馈（类型｜原观察｜confirmed/rejected/pending｜可选修正｜key；只包含仍存在的观察）：\n${feedbackLines || "无"}`
+      content: `可用报告（不含完整日记）：\n${sourceLines}\n\n结构化证据目录：\n${evidenceLines || "无"}\n\n用户之前的校准反馈：\n${feedbackLines || "无"}`
     }
   ];
 }
 function parseObservation(raw, reports, maturity = computeObservationMaturity(reports)) {
   const value = objectValue(raw);
-  const stageReports = maturity?.stage === "initial" ? reports : maturity?.completeIndependentSources ?? reports;
-  const allowedDates = observationReportEvidenceDates(stageReports);
-  if (allowedDates.size === 0) {
-    throw new Error("来源报告没有明确的 evidenceDates，无法生成观照");
-  }
-  const normalizeItemsWithEvidence = (items) => Array.isArray(items) ? items.map((item) => ({
-    ...item,
-    evidenceDates: observationEvidenceDates(item?.evidenceDates, allowedDates)
-  })).filter((item) => item.evidenceDates.length > 0) : [];
-  const normalized = normalizeObservationAnalysis({
-    ...value,
-    changes: normalizeItemsWithEvidence(value.changes),
-    perspectives: normalizeItemsWithEvidence(value.perspectives),
-    hypotheses: normalizeItemsWithEvidence(value.hypotheses),
-    roles: normalizeItemsWithEvidence(value.roles)
-  });
-  if (normalized === null) {
-    throw new Error("模型结果缺少观照结构");
-  }
-  if (normalized.changes.length === 0 && normalized.perspectives.length === 0 && normalized.hypotheses.length === 0) {
-    throw new Error("观照至少需要一条有证据的观察");
-  }
-  const constrained = constrainObservationAnalysisForMaturity(normalized, maturity);
-  if (constrained.changes.length === 0 && constrained.perspectives.length === 0 && constrained.hypotheses.length === 0) {
-    throw new Error("当前阶段没有足够的低风险、有证据观照");
-  }
-  return constrained;
+  const evidence = observationEvidenceCatalog(reports);
+  if (evidence.length === 0) throw new Error("来源报告没有结构化事件证据，无法生成新版观照");
+  const normalized = normalizeObservationV2(value, evidence);
+  if (normalized === null) throw new Error("模型结果缺少有效的观照 claims 或证据引用");
+  return normalized;
 }
 function extractJson(raw) {
   const trimmed = raw.trim();
@@ -3827,25 +4009,25 @@ async function generateRatingAssessment(provider, draft) {
 }
 async function generateWeeklyReport(provider, source, settings) {
   const raw = await provider.generate(buildWeeklyReportMessages(source, settings), "weekly-report");
-  return parseWithRepair(
-    provider,
-    raw,
-    "weekly-report",
-    (value) => parseWeeklyReport(value, source.period)
-  );
+  try {
+    return parseWeeklyReport(raw, source.period, source, true);
+  } catch {
+    const repaired = await provider.generate(buildRepairMessages(raw, "weekly-report"), "repair");
+    return parseWeeklyReport(repaired, source.period, source, false);
+  }
 }
 async function generateMonthlyReport(provider, source, settings) {
   const raw = await provider.generate(buildMonthlyReportMessages(source, settings), "monthly-report");
-  return parseWithRepair(
-    provider,
-    raw,
-    "monthly-report",
-    (value) => parseMonthlyReport(value, source.period)
-  );
+  try {
+    return parseMonthlyReport(raw, source.period, source, true);
+  } catch {
+    const repaired = await provider.generate(buildRepairMessages(raw, "monthly-report"), "repair");
+    return parseMonthlyReport(repaired, source.period, source, false);
+  }
 }
 async function generateObservation(provider, reports, feedback = {}, maturity = computeObservationMaturity(reports)) {
-  if (observationReportEvidenceDates(reports).size === 0) {
-    throw new Error("来源报告没有明确的 evidenceDates，无法生成观照；请先生成带证据日期的报告");
+  if (observationEvidenceCatalog(reports).length === 0) {
+    throw new Error("来源报告没有可引用的结构化事件，无法生成观照；请先重新生成带事件依据的周报或月报");
   }
   const raw = await provider.generate(buildObservationMessages(reports, feedback, maturity), "observation");
   return parseWithRepair(provider, raw, "observation", (value) => parseObservation(value, reports, maturity));
@@ -4516,13 +4698,57 @@ function parseSavedEvents(block) {
     };
   }
 }
-function parseTranscript(block) {
+function parseTranscriptBlock(block) {
   const marker = "> [!info]- 原始问答";
   const start = block.indexOf(marker);
   if (start === -1) {
-    return "";
+    return { text: "", markdown: "", answers: [], error: "这次记录没有可用的原始问答" };
   }
-  return block.slice(start + marker.length).split("\n").map((line) => line.replace(/^> ?/, "")).join("\n").replace(/\*\*(.+?)\*\*/g, "$1").trim();
+  const raw = block.slice(start);
+  const separator = /\n\n---\s*$/.exec(raw);
+  const markdown = (separator === null ? raw : raw.slice(0, separator.index)).replace(/\r?\n+$/, "");
+  const quoted = markdown.slice(marker.length).split("\n").map((line) => line.replace(/^> ?/, ""));
+  const answers = [];
+  let current = null;
+  let orphanContent = false;
+  const questionMarkers = quoted.filter((line) => /^\*\*/.test(line.trim())).length;
+  for (const line of quoted) {
+    const question = /^\*\*(.+?)\*\*\s*$/.exec(line.trim());
+    if (question !== null) {
+      if (current !== null) answers.push(current);
+      current = { question: (question[1] ?? "").trim(), lines: [] };
+      continue;
+    }
+    if (current !== null) current.lines.push(line);
+    else if (line.trim().length > 0) orphanContent = true;
+  }
+  if (current !== null) answers.push(current);
+  const normalized = answers.map((answer) => ({
+    question: answer.question,
+    answer: answer.lines.join("\n").replace(/\n+$/g, "").trim(),
+    kind: "legacy"
+  })).filter((answer) => answer.question.length > 0 && answer.answer.length > 0);
+  const text = quoted.join("\n").replace(/\*\*(.+?)\*\*/g, "$1").trim();
+  return {
+    text,
+    markdown,
+    answers: normalized,
+    error: normalized.length === 0 ? "原始问答格式无法识别" : orphanContent || questionMarkers !== answers.length || normalized.length !== answers.length ? "原始问答包含空问题、空回答或无法识别的结构" : ""
+  };
+}
+function parseSessionMeta(block, fallbackVersion = 3) {
+  const raw = /<!--\s*mind-trace-session:\s*(\{[^\n]+\})\s*-->/.exec(block)?.[1];
+  if (raw === void 0) return { schema: fallbackVersion, generatedAt: "", source: "legacy" };
+  try {
+    const value = JSON.parse(raw);
+    return {
+      schema: Number(value.schema) === JOURNAL_SCHEMA_VERSION ? JOURNAL_SCHEMA_VERSION : fallbackVersion,
+      generatedAt: typeof value.generatedAt === "string" ? value.generatedAt : "",
+      source: value.source === "regenerated" ? "regenerated" : "conversation"
+    };
+  } catch {
+    return { schema: fallbackVersion, generatedAt: "", source: "legacy" };
+  }
 }
 function parseRating(block, key, selfScore) {
   const section = sectionBlock(block, "状态对照");
@@ -4554,6 +4780,7 @@ function parseSavedJournal(content, frontmatter) {
     stress: frontmatterNumberArray(frontmatter, "stress")
   };
   const dayThemes = frontmatterThemes(frontmatter);
+  const fileVersion = Number(frontmatter["mind-trace-version"]) || 3;
   const headings = [...content.matchAll(/^## (\d{2}:\d{2})\s*$/gm)];
   const sessions = headings.map((heading, index) => {
     if (heading[1] === void 0) {
@@ -4570,7 +4797,12 @@ function parseSavedJournal(content, frontmatter) {
     }
     const savedThemes = parseList(sectionText(block, "今日主题"));
     const savedEvents = parseSavedEvents(block);
+    const transcript = parseTranscriptBlock(block);
+    const sessionMeta = parseSessionMeta(block, 3);
     return {
+      version: sessionMeta.schema,
+      generatedAt: sessionMeta.generatedAt,
+      source: sessionMeta.source,
       time: heading[1],
       diary: sectionText(block, "日记"),
       events: savedEvents.events,
@@ -4585,14 +4817,18 @@ function parseSavedJournal(content, frontmatter) {
         energy: parseRating(block, "energy", energy),
         stress: parseRating(block, "stress", stress)
       },
-      insights: parseList(sectionText(block, "反思洞察")),
+      insights: parseList(sectionText(block, "本次轻反思") || sectionText(block, "反思洞察")),
       microAction: sectionText(block, "明日微行动"),
       selfQuestion: sectionText(block, "留给自己的问题"),
       themes: savedThemes.length > 0 ? savedThemes : dayThemes,
-      transcript: parseTranscript(block)
+      transcript: transcript.text,
+      transcriptMarkdown: transcript.markdown,
+      transcriptAnswers: transcript.answers,
+      transcriptError: transcript.error
     };
   });
   return {
+    version: fileVersion,
     date: frontmatter.date,
     sessions
   };
@@ -5569,7 +5805,7 @@ function renderReviewMap(container, session) {
     ["正文", "1 篇"],
     ["今日事件", session.eventState === "ready" ? `${session.events.length} 件` : "待整理"],
     ["今日切片", `${session.facets.length} 个`],
-    ["反思洞察", `${session.insights.length} 条`],
+    ["本次轻反思", `${session.insights.length} 条`],
     ["明日行动", "1 步"]
   ]) {
     const item = map.createDiv({
@@ -5589,6 +5825,15 @@ function renderSession(container, session, options = {}) {
   });
   sessionHeading.createSpan({ text: "今日记录" });
   sessionHeading.createEl("time", { text: session.time });
+  if (options.onRegenerateSession !== void 0) {
+    const regenerate = sessionHeading.createEl("button", {
+      cls: "mind-trace-session-regenerate",
+      text: session.version >= JOURNAL_SCHEMA_VERSION ? "重新整理这次记录" : "更新这次记录",
+      attr: { type: "button", title: session.transcriptError || "根据原始问答生成最新版" }
+    });
+    regenerate.disabled = options.regenerationBusy === true || session.transcriptAnswers?.length === 0 || Boolean(session.transcriptError);
+    regenerate.addEventListener("click", options.onRegenerateSession);
+  }
   renderRatings(article, session.ratings);
   renderReviewMap(article, session);
   const diarySection = article.createEl("section", {
@@ -5675,9 +5920,9 @@ function renderSession(container, session, options = {}) {
   });
   insightsHeading.createDiv({
     cls: "mind-trace-card-title",
-    text: "我从今天看见"
+    text: "本次轻反思"
   });
-  insightsHeading.createSpan({ text: "反思洞察" });
+  insightsHeading.createSpan({ text: "只依据本次问答，不代表长期模式" });
   for (const [index, insight] of session.insights.entries()) {
     const row = insightsSection.createDiv({
       cls: "mind-trace-insight-row"
@@ -5775,10 +6020,16 @@ function renderSavedJournal(container, document2, options = {}) {
   header.createEl("p", {
     text: `共 ${document2.sessions.length} 次记录`
   });
-  if (options.onEditSource !== void 0 || options.onExportPdf !== void 0 || options.onDelete !== void 0) {
+  if (options.onEditSource !== void 0 || options.onExportPdf !== void 0 || options.onDelete !== void 0 || options.onRegenerateDay !== void 0) {
     const actions = header.createDiv({
       cls: "mind-trace-saved-header-actions"
     });
+    if (options.onRegenerateDay !== void 0 && document2.sessions.length > 1) {
+      const canRegenerateDay = document2.sessions.every((session) => session.transcriptAnswers?.length > 0 && !session.transcriptError);
+      const regenerateDay = actions.createEl("button", { cls: "mind-trace-journal-regenerate-day", text: document2.sessions.every((session) => session.version >= JOURNAL_SCHEMA_VERSION) ? "重新整理当天全部记录" : "更新当天全部记录", attr: { type: "button", title: canRegenerateDay ? "根据每次原始问答生成最新版" : "当天存在无法解析原始问答的记录" } });
+      regenerateDay.disabled = options.regenerationBusy === true || !canRegenerateDay;
+      regenerateDay.addEventListener("click", options.onRegenerateDay);
+    }
     if (options.onExportPdf !== void 0) {
       const exportPdf = actions.createEl("button", {
         cls: "mind-trace-export-pdf",
@@ -5872,6 +6123,8 @@ function renderSavedJournal(container, document2, options = {}) {
   const session = document2.sessions[selectedSessionIndex];
   if (session !== void 0) {
     renderSession(shell, session, {
+      regenerationBusy: options.regenerationBusy,
+      onRegenerateSession: options.onRegenerateSession === void 0 ? void 0 : () => options.onRegenerateSession(selectedSessionIndex),
       events: {
         date: document2.date,
         editing: options.editingEventSessionIndex === selectedSessionIndex,
@@ -6051,6 +6304,7 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
   eventEditMtime = null;
   eventSaveBusy = false;
   eventSaveError = "";
+  journalRegenerationBusy = false;
   getViewType() {
     return SAVED_JOURNAL_VIEW_TYPE;
   }
@@ -6075,6 +6329,7 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       this.eventEditMtime = null;
       this.eventSaveBusy = false;
       this.eventSaveError = "";
+      this.journalRegenerationBusy = false;
     } else if (changed && this.editingEventSessionIndex !== null && !this.eventSaveBusy) {
       this.editingEventSessionIndex = null;
       this.editingEventFocusIndex = null;
@@ -6154,6 +6409,9 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       this.selectedSessionIndex = Math.min(selectedSessionIndex, Math.max(0, document2.sessions.length - 1));
       renderSavedJournal(rendered, document2, {
         selectedSessionIndex: this.selectedSessionIndex,
+        regenerationBusy: this.journalRegenerationBusy,
+        onRegenerateSession: (sessionIndex) => this.beginJournalRegeneration([sessionIndex]),
+        onRegenerateDay: () => this.beginJournalRegeneration(document2.sessions.map((_, index) => index)),
         onSessionChange: (index) => {
           this.cancelEventEditing(false);
           this.selectedSessionIndex = index;
@@ -6197,6 +6455,93 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       restoreMindTraceContext(this.contentEl, context);
     }
     this.applyEventFocus();
+  }
+  beginJournalRegeneration(sessionIndexes) {
+    if (this.file === null || this.journalRegenerationBusy || !Array.isArray(sessionIndexes) || sessionIndexes.length === 0) return;
+    if (!this.plugin.isProviderConfigured()) {
+      showMindTraceNotice("请先在心迹设置中配置模型与 API Key");
+      return;
+    }
+    const file = this.file;
+    let document2;
+    try {
+      document2 = parseSavedJournal(this.data, parseFrontmatter(this.data));
+    } catch (error) {
+      showMindTraceNotice(errorMessage(error));
+      return;
+    }
+    const selected = [...new Set(sessionIndexes)].map((index) => ({ index, session: document2.sessions[index] })).filter((item) => item.session !== void 0);
+    if (selected.length !== sessionIndexes.length || selected.some((item) => item.session.transcriptAnswers?.length === 0 || item.session.transcriptError)) {
+      showMindTraceNotice("选中的记录缺少可解析的原始问答");
+      return;
+    }
+    const reviewedEventCount = selected.reduce((sum, item) => sum + (item.session.eventReviewed ? item.session.events.length : 0), 0);
+    openMindTraceOperation(this.app, this.plugin, {
+      eyebrow: "心迹日记 · 更新到最新版",
+      title: selected.length > 1 ? `更新当天 ${selected.length} 次记录？` : "更新这次记录？",
+      description: `将根据原始问答重新生成正文、全部事件、切片和轻反思。日期、自评、时间和原始问答保持不变${reviewedEventCount > 0 ? `；${reviewedEventCount} 件人工确认事件也会被替换` : ""}。生成后先显示校样，不会立即写回。`,
+      confirmLabel: "生成校样",
+      warning: reviewedEventCount > 0,
+      stages: ["读取原始问答", "生成最新版内容", "独立评估状态", "准备校样"],
+      run: async (update) => {
+        this.journalRegenerationBusy = true;
+        this.render(true);
+        const expectedMtime = file.stat.mtime;
+        update({ stage: 1, total: 4, title: "读取原始问答", detail: `已确认 ${selected.length} 次记录可以安全恢复。` });
+        const history = await this.plugin.repository.recentContext(this.plugin.settings, parseLocalDate(document2.date) ?? (/* @__PURE__ */ new Date()));
+        update({ stage: 2, total: 4, title: "生成最新版内容", detail: "正在使用当前提示与事件结构重新整理。" });
+        const replacements = await mapWithConcurrency(selected, 2, async ({ index, session }) => {
+          const draft = {
+            createdAt: `${document2.date}T${session.time}:00`,
+            entryDate: document2.date,
+            step: session.transcriptAnswers.length,
+            coreQuestions: session.transcriptAnswers.map((answer) => answer.question),
+            adaptiveQuestionLimit: 0,
+            ratings: { mood: session.ratings.mood.selfScore, energy: session.ratings.energy.selfScore, stress: session.ratings.stress.selfScore },
+            answers: session.transcriptAnswers,
+            pendingQuestion: null,
+            adaptiveCount: 0,
+            generated: null
+          };
+          const [entry, assessment] = await Promise.all([
+            generateJournal(this.plugin.createProvider(), draft, history, this.plugin.settings),
+            generateRatingAssessment(this.plugin.createProvider(), draft)
+          ]);
+          return { sessionIndex: index, source: session, entry, assessment, generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        });
+        update({ stage: 3, total: 4, title: "独立评估状态", detail: "已完成基于原始回答的状态对照。" });
+        update({ stage: 4, total: 4, title: "准备校样", detail: "正在准备写回前的完整预览。" });
+        return { file, expectedMtime, document: document2, replacements, reviewedEventCount };
+      },
+      onSuccess: (payload) => {
+        this.journalRegenerationBusy = false;
+        this.render(true);
+        new JournalRegenerationPreviewModal(this.app, this.plugin, payload, (value) => this.commitJournalRegeneration(value)).open();
+      },
+      onError: () => {
+        this.journalRegenerationBusy = false;
+        this.render(true);
+      },
+      successTitle: "最新版校样已经生成",
+      successDetail: "请核对后再确认替换原记录。",
+      successLabel: "查看校样",
+      backgroundSuccess: "日记校样已经生成"
+    });
+  }
+  async commitJournalRegeneration(payload) {
+    this.journalRegenerationBusy = true;
+    this.render(true);
+    try {
+      this.data = await this.plugin.repository.updateJournalSessions(payload.file, payload.document, payload.replacements, payload.expectedMtime);
+      parsedJournalCache.clear();
+      this.plugin.historyIndex.invalidate(payload.file.path);
+      this.plugin.emitMetricsChanged();
+      this.plugin.refreshWeeklyEventViews();
+      showMindTraceNotice(payload.replacements.length > 1 ? "当天记录已更新到最新版" : "这次记录已更新到最新版");
+    } finally {
+      this.journalRegenerationBusy = false;
+      this.render(true);
+    }
   }
   beginEventEditing(sessionIndex, focusIndex = null) {
     if (this.file === null || this.eventSaveBusy) {
@@ -6438,6 +6783,22 @@ function parseWeeklyEvidenceItems(section, label) {
   }
   return items;
 }
+function parseReportV4MarkdownItems(section) {
+  const items = [];
+  for (const line of section.split("\n")) {
+    if (!line.startsWith("- ")) continue;
+    let text = line.slice(2).trim();
+    const refsMatch = /\s*<!--\s*mind-trace-event-refs:\s*([^>]+)-->\s*$/.exec(text);
+    const eventRefs = refsMatch === null ? [] : refsMatch[1].split(",").map((value) => value.trim()).filter(Boolean);
+    if (refsMatch !== null) text = text.slice(0, refsMatch.index).trim();
+    const evidence = /\s*_（((?:\d{4}-\d{2}-\d{2})(?:、\d{4}-\d{2}-\d{2})*)）_\s*$/.exec(text);
+    const evidenceDates = evidence === null ? [] : evidence[1].split("、").filter((date) => parseLocalDate(date) !== null);
+    if (evidence !== null) text = text.slice(0, evidence.index).trim();
+    text = stripWeeklyInlineMarkdown(text);
+    if (text.length > 0) items.push({ text, evidenceDates, eventRefs });
+  }
+  return items;
+}
 function validWeeklyMetricValue(value, unit = null) {
   const normalized = stripWeeklyInlineMarkdown(value).replace(/\s+/g, " ");
   if (normalized === "—") {
@@ -6610,7 +6971,7 @@ function parseSavedWeeklyReport(content, frontmatter) {
     throw new Error("这不是可识别的心迹周报");
   }
   const reportVersion = Number(frontmatter["mind-trace-report-version"]);
-  if (reportVersion !== 3) {
+  if (![3, 4].includes(reportVersion)) {
     throw new Error("周报版本无法识别");
   }
   const periodStart = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
@@ -6626,6 +6987,28 @@ function parseSavedWeeklyReport(content, frontmatter) {
   const generatedAt = typeof frontmatter["generated-at"] === "string" ? frontmatter["generated-at"] : "";
   if (generatedAt.length === 0 || Number.isNaN(new Date(generatedAt).getTime())) {
     throw new Error("周报生成时间无法识别");
+  }
+  if (reportVersion === 4) {
+    const eventSnapshot = parseWeeklyEventSnapshot(weeklyReportSection(content, "本周事件图谱"));
+    const highlights = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "本周发生"));
+    const progress = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "进展与状态"));
+    const openLoops = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "尚未结束"));
+    const themes = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "本周反复出现"));
+    const carryForward = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "明确带到下周"));
+    return {
+      reportType: "weekly", reportVersion, periodStart, periodEnd,
+      periodStatus: weeklyReportFrontmatterStatus(frontmatter), generatedAt, sourceDays, sourceSessions,
+      eventCount: Number(frontmatter["event-count"] ?? eventSnapshot?.records.length ?? 0) || 0,
+      eventCoveredSessions: Number(frontmatter["event-covered-sessions"] ?? 0) || 0,
+      eventSourceSessions: Number(frontmatter["event-source-sessions"] ?? sourceSessions) || sourceSessions,
+      eventSnapshot,
+      summary: stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "一周概览")),
+      metrics: parseWeeklyMetrics(requiredWeeklyReportSection(content, "本周数字")),
+      highlights, progress, openLoops,
+      themes: themes.map((item) => ({ ...item, name: item.text.split("：")[0] ?? "主题", observation: item.text.split("：").slice(1).join("：") || item.text })),
+      carryForward,
+      truncated: content.includes("> [!info] 本周日记较长")
+    };
   }
   const summary = stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "一周概览"));
   const questionSection = requiredWeeklyReportSection(content, "留给自己的问题");
@@ -6716,14 +7099,21 @@ function parseMonthlyRhythm(section, periodStart = "") {
       end: toDate(endLabel)
     });
   }
-  const rhythm = parseWeeklyEvidenceItems(section, "月内节奏");
+  let rhythm = [];
+  try {
+    rhythm = parseWeeklyEvidenceItems(section, "月内节奏");
+  } catch {
+    // v4 的确定性自然周表可以独立存在；模型没有额外节奏文字时不应让整份月报失效。
+    rhythm = [];
+  }
   return { weeks, rhythm };
 }
 function parseSavedMonthlyReport(content, frontmatter) {
   if (frontmatter["mind-trace-report"] !== true || frontmatter["report-type"] !== "monthly") {
     throw new Error("这不是可识别的心迹月报");
   }
-  if (Number(frontmatter["mind-trace-report-version"]) !== 3) {
+  const reportVersion = Number(frontmatter["mind-trace-report-version"]);
+  if (![3, 4].includes(reportVersion)) {
     throw new Error("月报版本无法识别");
   }
   const periodStart = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
@@ -6747,6 +7137,28 @@ function parseSavedMonthlyReport(content, frontmatter) {
   if (generatedAt.length === 0 || Number.isNaN(new Date(generatedAt).getTime())) {
     throw new Error("月报生成时间无法识别");
   }
+  if (reportVersion === 4) {
+    const rhythmSection = requiredWeeklyReportSection(content, "月内节奏");
+    const parsedRhythm = parseMonthlyRhythm(rhythmSection, periodStart);
+    const eventSnapshot = parseWeeklyEventSnapshot(weeklyReportSection(content, "本月事件图谱"));
+    const turningPoints = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "跨周转折"));
+    const themeEvolution = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "主题如何演变"));
+    const threads = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "持续推进与停滞"));
+    const carryForward = parseReportV4MarkdownItems(requiredWeeklyReportSection(content, "带入下月的未决事项"));
+    return {
+      reportType: "monthly", reportVersion, periodStart, periodEnd, periodStatus, comparisonStart, comparisonEnd, generatedAt,
+      sourceDays, sourceSessions, activeWeeks,
+      eventCount: Number(frontmatter["event-count"] ?? eventSnapshot?.records.length ?? 0) || 0,
+      eventCoveredSessions: Number(frontmatter["event-covered-sessions"] ?? 0) || 0,
+      eventSourceSessions: Number(frontmatter["event-source-sessions"] ?? sourceSessions) || sourceSessions,
+      eventSnapshot,
+      summary: stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "本月概览")),
+      metrics: parseMonthlyMetrics(requiredWeeklyReportSection(content, "本月数字")),
+      weekStats: parsedRhythm.weeks, rhythm: parsedRhythm.rhythm,
+      turningPoints, themeEvolution, threads, carryForward,
+      truncated: content.includes("> [!info] 本月日记较长")
+    };
+  }
   const summary = stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "本月概览"));
   const question = stripWeeklyInlineMarkdown(requiredWeeklyReportSection(content, "留给自己的问题"));
   const rhythmSection = requiredWeeklyReportSection(content, "月内节奏");
@@ -6758,7 +7170,7 @@ function parseSavedMonthlyReport(content, frontmatter) {
   const eventSourceSessions = Number(frontmatter["event-source-sessions"] ?? sourceSessions);
   return {
     reportType: "monthly",
-    reportVersion: 3,
+    reportVersion,
     periodStart,
     periodEnd,
     periodStatus,
@@ -7484,8 +7896,9 @@ function renderWeeklyEventCenter(container, report, options = {}) {
   copy.createDiv({ cls: "mind-trace-card-title", text: `${scope}围绕什么展开` });
   copy.createEl("p", { text: "位置只由事件与论元的连接关系决定；选择节点后查看发生时间与完整上下文。" });
   const liveSource = options.eventSource ?? null;
-  const aggregate = liveSource?.events ?? report.eventSnapshot ?? aggregateEventRecords([]);
-  const coverage = liveSource === null ? { covered: report.eventCoveredSessions, source: report.eventSourceSessions } : { covered: liveSource.eventCoveredSessions, source: liveSource.eventSourceSessions };
+  const candidateAggregate = liveSource?.events ?? report.eventSnapshot;
+  const aggregate = candidateAggregate !== null && typeof candidateAggregate === "object" && Array.isArray(candidateAggregate.records) && Array.isArray(candidateAggregate.nodes) ? candidateAggregate : aggregateEventRecords([]);
+  const coverage = liveSource === null ? { covered: Number(report.eventCoveredSessions) || 0, source: Number(report.eventSourceSessions) || Number(report.sourceSessions) || 0 } : { covered: Number(liveSource.eventCoveredSessions) || 0, source: Number(liveSource.eventSourceSessions) || Number(report.sourceSessions) || 0 };
   const graphStatus = heading.createSpan({ text: options.eventLoading ? "正在读取日记…" : `${aggregate.records.length} 件事件 · ${coverage.covered}/${coverage.source} 篇已覆盖` });
   if (typeof options.eventError === "string" && options.eventError.length > 0) {
     section.createDiv({ cls: "mind-trace-event-inline-state is-error", text: options.eventError, attr: { role: "alert" } });
@@ -7500,7 +7913,7 @@ function renderWeeklyEventCenter(container, report, options = {}) {
     stale.createEl("strong", { text: "当前图谱已根据日记更新" });
     stale.createSpan({ text: `Markdown 快照仍是上次生成${monthly ? "月报" : "周报"}时的版本。` });
   }
-  if ((liveSource?.eventInvalidSessions.length ?? 0) > 0) {
+  if ((liveSource?.eventInvalidSessions?.length ?? 0) > 0) {
     const invalidState = section.createDiv({ cls: "mind-trace-event-inline-state is-error", attr: { role: "alert" } });
     invalidState.createDiv({ cls: "mind-trace-event-empty-title", text: `${liveSource.eventInvalidSessions.length} 篇记录的事件结构不匹配` });
     invalidState.createEl("p", { text: `可以逐篇打开处理，也可以确认后批量重新生成${monthly ? "；月报会按自然周分组" : ""}。原事件章节在新结果校验成功前不会改写。` });
@@ -7519,7 +7932,7 @@ function renderWeeklyEventCenter(container, report, options = {}) {
       }
     }
   }
-  const calibrationCount = liveSource?.eventCalibrationSessions.length ?? 0;
+  const calibrationCount = liveSource?.eventCalibrationSessions?.length ?? 0;
   if (calibrationCount > 0 && options.onBackfillEvents !== void 0) {
     const missing = section.createDiv({ cls: "mind-trace-event-coverage-card" });
     const missingCopy = missing.createDiv();
@@ -7625,7 +8038,165 @@ function renderWeeklyMetricScale(card, metric) {
     scale.createSpan({ cls: `mind-trace-weekly-metric-scale-cell${level <= filled ? " is-filled" : ""}`, attr: { "aria-hidden": "true" } });
   }
 }
+var V4_REPORT_ENUM_LABELS = {
+  started: "开始",
+  advanced: "推进",
+  blocked: "受阻",
+  completed: "完成",
+  unchanged: "无变化",
+  ongoing: "进行中",
+  planned: "计划中",
+  uncertain: "不确定",
+  appeared: "出现",
+  strengthened: "增强",
+  weakened: "减弱",
+  continued: "延续",
+  shifted: "转向",
+  ended: "结束",
+  stalled: "停滞",
+  repeated: "反复",
+  resolved: "解决",
+  goal: "目标",
+  relationship: "关系",
+  project: "项目",
+  habit: "习惯",
+  other: "其他"
+};
+function v4ReportEnumLabel(value) {
+  return V4_REPORT_ENUM_LABELS[value] ?? value;
+}
+function localizeV4ReportText(value) {
+  return String(value ?? "").replace(/\b(started|advanced|blocked|completed|unchanged|ongoing|planned|uncertain|appeared|strengthened|weakened|continued|shifted|ended|stalled|repeated|resolved|goal|relationship|project|habit|other)\b/g, (match) => v4ReportEnumLabel(match));
+}
+function v4ReportDisplayText(item) {
+  if (typeof item?.subject === "string" && item.subject.length > 0) {
+    return `${item.subject}${item.status ? `｜${v4ReportEnumLabel(item.status)}` : ""}：${localizeV4ReportText(item.text)}`;
+  }
+  if (typeof item?.name === "string" && item.name.length > 0 && typeof item?.observation === "string") {
+    const qualifiers = [item.type, item.trajectory].filter((value) => typeof value === "string" && value.length > 0).map(v4ReportEnumLabel);
+    return `${[item.name, ...qualifiers].join("｜")}：${item.observation}`;
+  }
+  return localizeV4ReportText(item?.text ?? item?.observation ?? item?.name ?? "记录");
+}
+function renderSavedV4Report(container, report, options = {}) {
+  const monthly = report.reportType === "monthly";
+  container.empty();
+  container.addClass("mind-trace-view", "mind-trace-saved-weekly-report", "mind-trace-saved-weekly-report-v4");
+  if (monthly) container.addClass("mind-trace-saved-monthly-report");
+  const shell = container.createDiv({ cls: `mind-trace-journal-shell mind-trace-saved-shell mind-trace-weekly-shell mind-trace-v4-report-shell${monthly ? " mind-trace-monthly-shell" : ""}`, attr: { "aria-busy": options.busy === true ? "true" : "false" } });
+  const header = shell.createEl("header", { cls: "mind-trace-saved-header mind-trace-weekly-header" });
+  header.createDiv({ cls: "mind-trace-eyebrow", text: `心迹${monthly ? "月报" : "周报"} · 记录版 v4` });
+  header.createEl("h1", { cls: "mind-trace-journal-title", text: `${report.periodStart} — ${report.periodEnd}` });
+  header.createEl("p", { text: `${report.sourceDays} 个记录日 · ${report.sourceSessions} 篇记录 · ${weeklyGeneratedAtText(report.generatedAt)}` });
+  const actions = header.createDiv({ cls: "mind-trace-saved-header-actions" });
+  if (options.onRegenerate !== void 0) {
+    const button = actions.createEl("button", { cls: "mind-trace-report-regenerate", text: options.busy ? "正在生成…" : "重新生成", attr: { type: "button" } });
+    button.disabled = options.busy === true;
+    button.addEventListener("click", options.onRegenerate);
+  }
+  if (options.onEditSource !== void 0) actions.createEl("button", { cls: "mind-trace-edit-source", text: "编辑 Markdown", attr: { type: "button" } }).addEventListener("click", options.onEditSource);
+  if (options.onDelete !== void 0) actions.createEl("button", { cls: "mind-trace-delete-file", text: "删除", attr: { type: "button" } }).addEventListener("click", options.onDelete);
+  if (options.busy === true) {
+    const status = shell.createDiv({ cls: "mind-trace-report-inline-status", attr: { role: "status", "aria-live": "polite" } });
+    attachLlmActivityStatus(status, options.llmActivitySource, `正在重新整理这份${monthly ? "月报" : "周报"}…`);
+  }
+  if (options.error) shell.createDiv({ cls: "mind-trace-report-inline-error", text: options.error, attr: { role: "alert" } });
+  const fold = shell.createEl("section", { cls: `mind-trace-editor-card mind-trace-weekly-fold${monthly ? " mind-trace-monthly-overview" : ""}` });
+  const ledger = fold.createDiv({ cls: "mind-trace-weekly-ledger" });
+  ledger.createDiv({ cls: "mind-trace-section-kicker", text: monthly ? report.periodStatus === "partial" ? "本月预览 · 截至今天" : "整月账页" : "一周账页" });
+  ledger.createEl("time", { text: `${report.periodStart.slice(5).replace("-", ".")}\n—\n${report.periodEnd.slice(5).replace("-", ".")}` });
+  const ledgerStats = ledger.createDiv({ cls: "mind-trace-weekly-ledger-stats" });
+  const stats = [["记录日", String(report.sourceDays)], ["总篇数", String(report.sourceSessions)]];
+  if (monthly) stats.push(["活跃周", String(report.activeWeeks ?? 0)]);
+  for (const [label, value] of stats) {
+    const item = ledgerStats.createDiv();
+    item.createSpan({ text: label });
+    item.createEl("strong", { text: value });
+  }
+  const foldBody = fold.createDiv({ cls: "mind-trace-weekly-fold-body" });
+  foldBody.createDiv({ cls: "mind-trace-diary-kicker", text: `${monthly ? "本月" : "一周"}概览 · 已归档` });
+  foldBody.createDiv({ cls: "mind-trace-card-title mind-trace-diary-title", text: monthly ? "这个月的正文" : "这一周的正文" });
+  foldBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-weekly-summary", text: report.summary });
+  const overviewIndex = foldBody.createDiv({ cls: "mind-trace-weekly-overview-index", attr: { role: "list", "aria-label": monthly ? "本月回顾索引" : "本周回顾索引" } });
+  if (monthly) {
+    overviewIndex.createSpan({ text: `${report.turningPoints?.length ?? 0} 个跨周转折` });
+    overviewIndex.createSpan({ text: `${report.themeEvolution?.length ?? 0} 条主题演变` });
+    overviewIndex.createSpan({ text: `${report.activeWeeks ?? 0} 个活跃周` });
+  } else {
+    overviewIndex.createSpan({ text: `${report.highlights?.length ?? 0} 件本周发生` });
+    overviewIndex.createSpan({ text: `${report.openLoops?.length ?? 0} 个未决事项` });
+    overviewIndex.createSpan({ text: `${report.carryForward?.length ?? 0} 项带到下周` });
+  }
+  const metricsSection = shell.createEl("section", { cls: `mind-trace-rating-comparison mind-trace-weekly-metrics${monthly ? " mind-trace-monthly-metrics" : ""}` });
+  const metricsHeading = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-heading" });
+  const metricsCopy = metricsHeading.createDiv();
+  const comparisonLabel = monthly ? report.periodStatus === "partial" ? "上月同期" : "上月" : "前一周";
+  metricsCopy.createDiv({ cls: "mind-trace-section-kicker", text: `状态对照 · ${comparisonLabel}` });
+  metricsCopy.createDiv({ cls: "mind-trace-rating-comparison-title", text: monthly ? "一个月，状态如何移动" : "这一周，状态如何移动", attr: { role: "heading", "aria-level": "2" } });
+  metricsCopy.createEl("p", { text: `${monthly ? "本月" : "本周"}值来自日记自评平均；变化量用${comparisonLabel}作对照。` });
+  const metricGrid = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-grid" });
+  for (const metric of report.metrics ?? []) {
+    const card = metricGrid.createEl("section", { cls: `mind-trace-rating-comparison-card mind-trace-rating-comparison-${metric.key} mind-trace-weekly-metric-card` });
+    const cardHeading = card.createDiv({ cls: "mind-trace-rating-card-heading" });
+    cardHeading.createDiv({ cls: "mind-trace-rating-card-title", text: metric.label });
+    cardHeading.createSpan({ cls: `mind-trace-rating-difference ${weeklyMetricDeltaClass(metric)}`, text: metric.delta === "—" ? "暂无对照" : `较${comparisonLabel} ${metric.delta}` });
+    const value = card.createDiv({ cls: "mind-trace-weekly-metric-value" });
+    value.createEl("output", { text: metric.current });
+    value.createSpan({ text: metric.current === "—" ? "" : "/ 5" });
+    renderWeeklyMetricScale(card, metric);
+  }
+  if (monthly && Array.isArray(report.weekStats)) {
+    const rhythm = shell.createEl("section", { cls: "mind-trace-editor-card mind-trace-monthly-rhythm" });
+    const rhythmHeading = rhythm.createDiv({ cls: "mind-trace-card-heading" });
+    rhythmHeading.createDiv({ cls: "mind-trace-card-title", text: "月内节奏" });
+    rhythmHeading.createSpan({ text: "自然周轴" });
+    const axis = rhythm.createDiv({ cls: "mind-trace-monthly-rhythm-axis", attr: { role: "list", "aria-label": "月度节律轴" } });
+    for (const week of report.weekStats) {
+      const item = axis.createDiv({ cls: "mind-trace-monthly-rhythm-week", attr: { role: "listitem" } });
+      item.createDiv({ cls: "mind-trace-monthly-rhythm-label", text: `${week.startLabel ?? week.start?.slice(5) ?? ""}–${week.endLabel ?? week.end?.slice(5) ?? ""}` });
+      const bars = item.createDiv({ cls: "mind-trace-monthly-rhythm-bars" });
+      for (const [key, label] of [["mood", "心"], ["energy", "精"], ["stress", "压"]]) {
+        const score = week[key];
+        const bar = bars.createDiv({ cls: `mind-trace-monthly-rhythm-bar is-${key}`, attr: { title: `${label} ${score === null ? "无数据" : Number(score).toFixed(1)}` } });
+        bar.style.setProperty("--mind-trace-rhythm-value", score === null ? "0" : String(score));
+      }
+      item.createDiv({ cls: "mind-trace-monthly-rhythm-meta", text: `${week.days} 天 · ${week.sessions} 篇` });
+    }
+    if (Array.isArray(report.rhythm) && report.rhythm.length > 0) {
+      const observations = rhythm.createDiv({ cls: "mind-trace-v4-rhythm-observations" });
+      renderWeeklyEvidenceRows(observations, report.rhythm.map((item) => ({ ...item, text: v4ReportDisplayText(item) })), "节奏", options.onOpenEvidenceDate ?? null);
+    }
+  }
+  const eventHost = shell.createDiv({ cls: "mind-trace-v4-event-host" });
+  try {
+    renderWeeklyEventCenter(eventHost, report, { ...options, reportType: monthly ? "monthly" : "weekly", scope: monthly ? "本月" : "本周", eventLimit: monthly ? options.monthlyGraphEventLimit ?? 100 : options.weeklyGraphEventLimit ?? 20 });
+  } catch (error) {
+    eventHost.empty();
+    const fallback = eventHost.createEl("section", { cls: "mind-trace-event-section mind-trace-weekly-event-center" });
+    options.onEventCenter?.(fallback);
+    fallback.createDiv({ cls: "mind-trace-event-empty-title", text: `${monthly ? "本月" : "本周"}事件图谱暂时无法显示` });
+    fallback.createEl("p", { text: `报告正文和统计仍可阅读。图谱错误：${errorMessage(error)}` });
+  }
+  const sections = monthly ? [["跨周转折", "跨自然周确认", report.turningPoints, "转折"], ["主题如何演变", "只记录跨周变化", report.themeEvolution, "主题"], ["持续推进与停滞", "事项状态轨迹", report.threads, "轨迹"], ["带入下月的未决事项", "明确延续", report.carryForward, "延续"]] : [["本周发生", "明确发生的重点", report.highlights, "发生"], ["进展与状态", "开始、推进与受阻", report.progress, "进展"], ["尚未结束", "仍在进行或待确认", report.openLoops, "未决"], ["本周反复出现", "只描述出现方式", report.themes, "主题"], ["明确带到下周", "来自已表达的意向", report.carryForward, "延续"]];
+  for (let index = 0; index < sections.length; index += 2) {
+    const group = sections.slice(index, index + 2);
+    const analysisGrid = shell.createDiv({ cls: `mind-trace-weekly-analysis-grid mind-trace-v4-analysis-grid${group.length === 1 ? " is-single" : ""}` });
+    for (const [title, label, items, mark] of group) {
+      const section = analysisGrid.createEl("section", { cls: "mind-trace-editor-card mind-trace-weekly-analysis-card" });
+      const cardHeading = section.createDiv({ cls: "mind-trace-card-heading" });
+      cardHeading.createDiv({ cls: "mind-trace-card-title", text: title });
+      cardHeading.createSpan({ text: label });
+      if (!Array.isArray(items) || items.length === 0) {
+        section.createDiv({ cls: "mind-trace-saved-copy mind-trace-v4-report-empty", text: "暂无足够记录。" });
+      } else {
+        renderWeeklyEvidenceRows(section, items.map((item) => ({ ...item, text: v4ReportDisplayText(item) })), mark, options.onOpenEvidenceDate ?? null);
+      }
+    }
+  }
+  if (report.truncated) shell.createEl("p", { cls: "mind-trace-weekly-truncated", text: `${monthly ? "本月" : "本周"}日记较长，AI 整理使用了截取后的事实摘录。` });
+}
 function renderSavedWeeklyReport(container, report, options = {}) {
+  if (report.reportVersion === 4) return renderSavedV4Report(container, report, options);
   container.empty();
   container.addClass("mind-trace-view", "mind-trace-saved-weekly-report");
   const shell = container.createDiv({
@@ -7757,6 +8328,7 @@ function renderSavedWeeklyReport(container, report, options = {}) {
   }
 }
 function renderSavedMonthlyReport(container, report, options = {}) {
+  if (report.reportVersion === 4) return renderSavedV4Report(container, report, options);
   container.empty();
   container.addClass("mind-trace-view", "mind-trace-saved-monthly-report", "mind-trace-saved-weekly-report");
   const shell = container.createDiv({
@@ -8054,7 +8626,17 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       return;
     }
     const context = captureMindTraceContext(this.contentEl);
-    renderWeeklyEventCenter(this.eventCenterEl.parentElement, report, this.eventRenderOptions(report, this.eventCenterEl));
+    try {
+      renderWeeklyEventCenter(this.eventCenterEl.parentElement, report, this.eventRenderOptions(report, this.eventCenterEl));
+    } catch (error) {
+      const host = this.eventCenterEl.parentElement;
+      this.eventCenterEl = null;
+      host.empty();
+      const fallback = host.createEl("section", { cls: "mind-trace-event-section mind-trace-weekly-event-center" });
+      this.eventCenterEl = fallback;
+      fallback.createDiv({ cls: "mind-trace-event-empty-title", text: "事件图谱暂时无法显示" });
+      fallback.createEl("p", { text: `报告正文和统计不受影响。图谱错误：${errorMessage(error)}` });
+    }
     restoreMindTraceContext(this.contentEl, context);
   }
   async loadEventSource(report, force = false) {
@@ -8504,6 +9086,8 @@ var JournalView = class extends import_obsidian4.ItemView {
   observationState = null;
   observationLoading = false;
   observationReports = null;
+  observationFiles = [];
+  observationSelectedPath = "";
   observationError = "";
   observationLoadToken = 0;
   observationDashboardCardEl = null;
@@ -8535,6 +9119,7 @@ var JournalView = class extends import_obsidian4.ItemView {
         this.monthlyReportState = null;
       }
       this.observationReports = null;
+      this.observationFiles = [];
       if (!this.busy && !this.weeklyReportLoading && !this.monthlyReportLoading && (this.mode === "home" || this.mode === "reports" || this.mode === "trajectory" || this.mode === "observation")) {
         if (this.metricsRenderTimer !== null) {
           window.clearTimeout(this.metricsRenderTimer);
@@ -10108,6 +10693,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           periodEnd: report.periodEnd,
           periodStatus: report.periodStatus === "partial" ? "partial" : "complete",
           generatedAt: report.generatedAt,
+          modifiedAt: item.file.stat.mtime,
           filePath: item.file.path,
           report
         });
@@ -10135,7 +10721,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     this.observationError = "";
     this.render(true);
     try {
-      this.observationReports = await this.collectObservationReports();
+      const [reports, observations] = await Promise.all([this.collectObservationReports(), this.plugin.observationRepository.list()]);
+      this.observationReports = reports;
+      this.observationFiles = observations;
+      if (this.observationSelectedPath.length === 0 || !observations.some((item) => item.file.path === this.observationSelectedPath && item.snapshot !== null)) {
+        this.observationSelectedPath = observations.find((item) => item.snapshot !== null)?.file.path ?? "";
+      }
     } catch (error) {
       this.observationReports = [];
       this.observationError = errorMessage(error);
@@ -10150,7 +10741,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const status = container.createDiv({ cls: "mind-trace-observation-state", attr: { role: kind === "error" ? "alert" : "status", "aria-live": "polite" } });
     const mark = kind === "loading" ? "读取" : kind === "error" ? "重试" : kind === "unconfigured" ? "连接" : "等待";
     const title = kind === "loading" ? "正在读取可解析的回顾" : kind === "error" ? "观照来源暂时无法读取" : kind === "unconfigured" ? "先选择一个模型服务" : kind === "missing" ? "还没有可用的回顾" : "还没有这次观照";
-    const body = kind === "loading" ? "只整理最近 8 份周报与 3 份月报的分析字段，不会发送原始日记。" : kind === "error" ? this.observationError || "读取回顾时遇到问题。" : kind === "unconfigured" ? "配置模型名称和 API Key 后，才能生成新的观照；已有观照仍可继续查看。" : kind === "missing" ? "至少需要 1 份能成功解析的周报或月报。先生成一份回顾，再回来观照。" : "从最近的周报与月报开始，整理一张可验证的变化描线。";
+    const body = kind === "loading" ? "将整理最近 8 份周报与 3 份月报中的报告字段、结构化事件摘要和短证据片段，不读取完整历史日记。" : kind === "error" ? this.observationError || "读取回顾时遇到问题。" : kind === "unconfigured" ? "配置模型名称和 API Key 后，才能生成新的观照；已有观照仍可继续查看。" : kind === "missing" ? "至少需要 1 份能成功解析且包含结构化事件的周报或月报。先生成一份回顾，再回来观照。" : "从最近的周报与月报开始，整理一张可验证的变化描线。";
     status.createDiv({ cls: "mind-trace-observation-state-mark", text: mark, attr: { "aria-hidden": "true" } });
     status.createDiv({ cls: "mind-trace-observation-state-title", text: title, attr: { role: "heading", "aria-level": "2" } });
     status.createEl("p", { text: body });
@@ -10179,13 +10770,20 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     });
   }
   observationSourceDescriptors(reports) {
-    return reports.map((item) => ({ type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt }));
+    return reports.map((item) => ({ type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt, modifiedAt: item.modifiedAt ?? 0 }));
   }
   observationGeneratedText(value) {
     return value ? weeklyGeneratedAtText(value) : "生成时间未记录";
   }
+  currentObservationSnapshot() {
+    const selected = this.observationFiles.find((item) => item.file.path === this.observationSelectedPath && item.snapshot !== null)?.snapshot;
+    if (selected !== void 0) return selected;
+    const latest = this.observationFiles.find((item) => item.snapshot !== null)?.snapshot;
+    if (latest !== void 0) return latest;
+    return normalizeSelfObservation(this.plugin.legacySelfObservation);
+  }
   observationFeedback(key) {
-    const feedback = this.plugin.settings.selfObservation?.feedback?.[key];
+    const feedback = this.currentObservationSnapshot()?.feedback?.[key];
     return feedback === void 0 ? { status: "pending", correction: "" } : { status: feedback.status, correction: feedback.correction ?? "" };
   }
   observationFeedbackLabel(status) {
@@ -10193,9 +10791,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   }
   openObservationFeedback(type, item) {
     const key = item.key || observationItemKey(type, item);
-    const text = type === "change" ? `${item.dimension}：${item.before} → ${item.now}` : type === "perspective" ? `${item.perspective}：${item.observation}` : type === "hypothesis" ? item.statement : `${item.label}：${item.observation}`;
+    const text = type === "claim" ? `${item.dimension}：${item.statement}` : type === "change" ? `${item.dimension}：${item.before} → ${item.now}` : type === "perspective" ? `${item.perspective}：${item.observation}` : type === "hypothesis" ? item.statement : `${item.label}：${item.observation}`;
     new ObservationFeedbackModal(this.app, this.plugin, { text }, this.observationFeedback(key), async (feedback) => {
-      await this.plugin.saveObservationFeedback(key, feedback);
+      const current = this.currentObservationSnapshot();
+      if (!current.filePath) throw new Error("当前观照不是可写的 Markdown 文件");
+      const updated = await this.plugin.saveObservationFeedback(current.filePath, key, feedback);
+      const entry = this.observationFiles.find((item) => item.file.path === current.filePath);
+      if (entry !== void 0 && updated !== null) entry.snapshot = updated;
       this.render(true);
     }).open();
   }
@@ -10230,7 +10832,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   renderObservationSourceDetails(container, sources) {
     const details = container.createEl("details", { cls: "mind-trace-observation-sources" });
     details.createEl("summary", { text: "来源与边界" });
-    details.createEl("p", { text: "观照只发送已生成报告中的摘要、变化、主题和自我问题，不发送原始日记。重叠的周报与月报不会重复增强线索；线索强度是证据出现方式的本地归纳，不等于真相概率。" });
+    details.createEl("p", { text: "将发送报告字段、结构化事件摘要和短证据片段，不发送完整历史日记。重叠的周报与月报会按事件去重；依据充分度由本地计算，不等于真相概率。" });
     const list = details.createEl("ul");
     for (const source of sources) {
       const item = list.createEl("li");
@@ -10328,7 +10930,15 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       if (!this.observationLoading) void this.loadObservationReports();
       return;
     }
-    const snapshot = normalizeSelfObservation(this.plugin.settings.selfObservation);
+    this.renderObservationHistory(shell);
+    if (this.plugin.legacySelfObservation?.analysis !== null && !this.observationFiles.some((item) => item.snapshot?.legacy === true)) {
+      const migration = shell.createDiv({ cls: "mind-trace-observation-freshness", attr: { role: "status" } });
+      migration.createDiv({ cls: "mind-trace-observation-freshness-title", text: "旧观照尚未迁移" });
+      migration.createEl("p", { text: "旧数据仍保留在 data.json；只有 Markdown 写入并重新验证成功后才会清除。" });
+      const retry = migration.createEl("button", { text: "重试迁移", attr: { type: "button" } });
+      retry.addEventListener("click", () => void this.plugin.migrateLegacyObservation());
+    }
+    const snapshot = this.currentObservationSnapshot();
     const maturity = snapshot.analysis !== null ? observationSnapshotMaturity(snapshot) : computeObservationMaturity(this.observationReports);
     if (this.observationReports.length === 0) {
       if (snapshot.analysis !== null) {
@@ -10355,6 +10965,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     this.renderObservationSnapshot(shell, snapshot, this.observationReports, maturity);
   }
   renderObservationSnapshot(shell, snapshot, reports, maturity = observationSnapshotMaturity(snapshot)) {
+    if (snapshot.analysis?.schemaVersion === 2) {
+      this.renderObservationSnapshotV2(shell, snapshot, reports, maturity);
+      return;
+    }
     const sources = snapshot.sources.length > 0 ? snapshot.sources : this.observationSourceDescriptors(reports);
     const analysis = constrainObservationAnalysisForMaturity(snapshot.analysis, maturity);
     const hero = shell.createEl("section", { cls: "mind-trace-observation-hero" });
@@ -10379,8 +10993,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         confirmLabel: "删除观照",
         warning: true,
         run: async () => {
-          await this.plugin.deleteSelfObservation();
+          await this.plugin.deleteSelfObservation(snapshot.filePath);
           this.observationReports = null;
+          this.observationFiles = [];
+          this.observationSelectedPath = "";
           this.observationState = null;
         },
         onSuccess: () => this.render(true),
@@ -10457,6 +11073,116 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     closing.createDiv({ cls: "mind-trace-observation-self-question", text: `留给自己：${analysis.selfQuestion}` });
     this.renderObservationSourceDetails(shell, sources);
   }
+  renderObservationHistory(shell) {
+    if (this.observationFiles.length === 0) return;
+    const bar = shell.createDiv({ cls: "mind-trace-observation-history" });
+    bar.createSpan({ text: "历史版本" });
+    const select = bar.createEl("select", { attr: { "aria-label": "选择观照历史版本" } });
+    for (const item of this.observationFiles) {
+      const label = item.snapshot !== null ? `${item.snapshot.generatedAt?.slice(0, 19).replace("T", " ") || item.file.basename}${item.snapshot.legacy ? " · 旧版" : ""}` : `${item.file.basename} · 格式异常`;
+      select.createEl("option", { value: item.file.path, text: label });
+    }
+    select.value = this.observationSelectedPath || this.observationFiles[0].file.path;
+    select.addEventListener("change", () => {
+      this.observationSelectedPath = select.value;
+      this.render(true);
+    });
+    const selected = this.observationFiles.find((item) => item.file.path === select.value);
+    const edit = bar.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
+    edit.addEventListener("click", () => {
+      const target = this.app.vault.getAbstractFileByPath(this.observationSelectedPath);
+      if (target instanceof import_obsidian4.TFile) void this.plugin.openProtectedMarkdownSource(this.leaf, target);
+    });
+    if (selected?.error) bar.createDiv({ cls: "mind-trace-observation-format-error", text: `${selected.file.path}：${selected.error}` });
+  }
+  renderObservationSnapshotV2(shell, snapshot, reports, maturity) {
+    const sources = snapshot.sources?.length > 0 ? snapshot.sources : this.observationSourceDescriptors(reports);
+    const analysis = snapshot.analysis;
+    const hero = shell.createEl("section", { cls: "mind-trace-observation-hero" });
+    const meta = hero.createDiv({ cls: "mind-trace-observation-meta" });
+    const starts = sources.map((source) => source.periodStart).filter(Boolean).sort();
+    const ends = sources.map((source) => source.periodEnd).filter(Boolean).sort();
+    meta.createSpan({ text: starts.length && ends.length ? `${starts[0]} — ${ends[ends.length - 1]}` : "来源周期未记录" });
+    meta.createSpan({ text: `${sources.length} 份来源报告` });
+    meta.createSpan({ text: this.observationGeneratedText(snapshot.generatedAt) });
+    hero.createDiv({ cls: "mind-trace-observation-summary", text: analysis.summary, attr: { role: "heading", "aria-level": "2" } });
+    this.renderObservationFreshness(hero, snapshot, reports);
+    const actions = hero.createDiv({ cls: "mind-trace-actions mind-trace-observation-actions" });
+    const regenerate = actions.createEl("button", { cls: "mod-cta", text: "基于最新来源重新观照", attr: { type: "button" } });
+    regenerate.disabled = !this.plugin.isProviderConfigured() || reports.length === 0;
+    regenerate.addEventListener("click", () => this.regenerateObservation(true));
+    const edit = actions.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
+    edit.addEventListener("click", () => {
+      const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
+      if (file instanceof import_obsidian4.TFile) void this.plugin.openProtectedMarkdownSource(this.leaf, file);
+    });
+    const remove = actions.createEl("button", { text: "删除", attr: { type: "button" } });
+    remove.addEventListener("click", () => {
+      openMindTraceOperation(this.app, this.plugin, {
+        eyebrow: "观照 · 删除确认", title: "删除这个历史版本？", description: "只删除当前观照 Markdown，不影响其他版本、来源报告或日记。", confirmLabel: "删除", warning: true,
+        run: async () => this.plugin.deleteSelfObservation(snapshot.filePath),
+        onSuccess: () => { this.observationSelectedPath = ""; this.observationReports = null; this.observationFiles = []; this.render(true); },
+        successTitle: "观照已移到废纸篓", successDetail: "其他观照版本和来源仍然保留。", backgroundSuccess: "观照已删除"
+      });
+    });
+    const panorama = shell.createEl("section", { cls: "mind-trace-observation-panorama" });
+    panorama.createDiv({ cls: "mind-trace-observation-section-title", text: "六维变化全景", attr: { role: "heading", "aria-level": "2" } });
+    panorama.createEl("p", { cls: "mind-trace-observation-section-note", text: "依据充分度由本地代码按支持日期、独立周期、跨度与反例计算，不是真相概率。" });
+    const grid = panorama.createDiv({ cls: "mind-trace-observation-panorama-grid" });
+    for (const dimension of OBSERVATION_DIMENSIONS) {
+      const claim = analysis.claims.find((item) => item.dimension === dimension);
+      const card = grid.createEl(claim ? "button" : "article", { cls: `mind-trace-observation-dimension-card${claim ? " has-evidence" : " is-empty"}`, attr: claim ? { type: "button" } : {} });
+      card.createSpan({ cls: "mind-trace-observation-dimension", text: dimension });
+      if (!claim) {
+        card.createDiv({ cls: "mind-trace-observation-muted", text: "暂无足够依据" });
+        continue;
+      }
+      const metrics = observationClaimMetrics(claim, snapshot.evidence ?? [], sources);
+      card.createDiv({ cls: "mind-trace-observation-dimension-copy", text: claim.statement });
+      const badges = card.createDiv({ cls: "mind-trace-observation-dimension-badges" });
+      badges.createSpan({ text: metrics.signal });
+      badges.createSpan({ text: `依据${metrics.sufficiency}` });
+      card.addEventListener("click", () => shell.querySelector(`[data-observation-claim="${claim.key}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+    const details = shell.createEl("section", { cls: "mind-trace-observation-section" });
+    details.createDiv({ cls: "mind-trace-observation-section-title", text: "观察详情", attr: { role: "heading", "aria-level": "2" } });
+    for (const claim of analysis.claims) {
+      const metrics = observationClaimMetrics(claim, snapshot.evidence ?? [], sources);
+      const card = details.createEl("article", { cls: `mind-trace-observation-claim is-${claim.layer}`, attr: { "data-observation-claim": claim.key } });
+      const top = card.createDiv({ cls: "mind-trace-observation-item-top" });
+      top.createSpan({ cls: "mind-trace-observation-dimension", text: claim.dimension });
+      top.createSpan({ cls: "mind-trace-observation-signal", text: `${metrics.signal} · 依据${metrics.sufficiency}` });
+      card.createDiv({ cls: "mind-trace-observation-item-copy", text: claim.statement });
+      if (claim.before || claim.now) card.createDiv({ cls: "mind-trace-observation-change-copy", text: `${claim.before || "暂无明确对照"} → ${claim.now || "暂无明确对照"}` });
+      card.createDiv({ cls: "mind-trace-observation-basis", text: `支持 ${metrics.support.length} · 反例 ${metrics.counter.length} · 独立周期 ${metrics.independentPeriods} · 跨度 ${metrics.spanDays} 天` });
+      const renderEvidence = (title, items, empty) => {
+        const block = card.createDiv({ cls: "mind-trace-observation-evidence-block" });
+        block.createDiv({ cls: "mind-trace-observation-evidence-label", text: title });
+        if (items.length === 0) block.createDiv({ cls: "mind-trace-observation-muted", text: empty });
+        for (const item of items) {
+          const button = block.createEl("button", { cls: "mind-trace-observation-evidence-record", text: observationEvidenceMarkdown(item), attr: { type: "button" } });
+          button.addEventListener("click", () => {
+            const journal = collectMetrics(this.app).entries.find((entry) => entry.date === item.date);
+            if (journal !== void 0) void this.plugin.openJournalDate(item.date);
+            else {
+              const sourcePath = item.sourceReports?.find((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFile);
+              if (sourcePath) void this.openWeeklyReportFile(sourcePath);
+            }
+          });
+        }
+      };
+      renderEvidence("支持记录", metrics.support, "暂无可用支持记录");
+      renderEvidence("反例", metrics.counter, "暂未找到反例，不等于不存在反例");
+      if (claim.alternative) card.createDiv({ cls: "mind-trace-observation-alternative", text: `另一种解释：${claim.alternative}` });
+      if (claim.missingInformation) card.createDiv({ cls: "mind-trace-observation-basis", text: `仍缺少的信息：${claim.missingInformation}` });
+      if (claim.verificationQuestion) card.createDiv({ cls: "mind-trace-observation-question", text: `可以问自己：${claim.verificationQuestion}` });
+      this.renderObservationFeedback(top, "claim", claim, card);
+    }
+    const closing = shell.createEl("section", { cls: "mind-trace-observation-closing" });
+    closing.createDiv({ cls: "mind-trace-observation-section-title", text: "接下来值得观察什么", attr: { role: "heading", "aria-level": "2" } });
+    closing.createDiv({ cls: "mind-trace-observation-next-step", text: analysis.nextObservation });
+    this.renderObservationSourceDetails(shell, sources);
+  }
   regenerateObservation(overwrite = false) {
     if (this.observationReports === null || this.observationReports.length === 0) {
       return;
@@ -10468,7 +11194,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     openMindTraceOperation(this.app, this.plugin, {
       eyebrow: "心迹 · 观照",
       title: overwrite ? "重新观照？" : "开始观照？",
-      description: "只会发送最近周报与月报中的分析字段；现有观照会被新的结果替换。",
+      description: "将发送报告字段、结构化事件摘要和短证据片段，不发送完整历史日记。每次都会新建一个 Markdown 版本，现有观照不会被覆盖。",
       confirm: overwrite,
       confirmLabel: overwrite ? "重新观照" : "开始观照",
       warning: overwrite,
@@ -10483,6 +11209,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       onSuccess: (snapshot) => {
         this.observationLoading = false;
         this.observationReports = this.observationReports ?? [];
+        this.observationSelectedPath = snapshot.filePath ?? "";
+        this.observationFiles = [];
+        void this.plugin.observationRepository.list().then((items) => {
+          this.observationFiles = items;
+          this.render(true);
+        });
         this.render(true);
         return snapshot;
       },
@@ -10497,6 +11229,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     });
   }
   observationPendingCount(snapshot, maturity = observationSnapshotMaturity(snapshot)) {
+    if (snapshot?.analysis?.schemaVersion === 2) {
+      return (snapshot.analysis.claims ?? []).filter((claim) => this.observationFeedback(claim.key).status === "pending").length;
+    }
     const analysis = snapshot?.analysis ? constrainObservationAnalysisForMaturity(snapshot.analysis, maturity) : null;
     if (analysis === null || typeof analysis !== "object") return 0;
     return ["changes", "perspectives", "hypotheses", "roles"].reduce((sum, section) => {
@@ -10515,7 +11250,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     header.createDiv({ cls: "mind-trace-home-section-title", text: "观照", attr: { id: "mind-trace-observation-dashboard-title", role: "heading", "aria-level": "2" } });
     header.createSpan({ cls: "mind-trace-observation-dashboard-eyebrow", text: "证据成长描线" });
     const body = card.createDiv({ cls: "mind-trace-observation-dashboard-body" });
-    const snapshot = normalizeSelfObservation(this.plugin.settings.selfObservation);
+    const snapshot = this.currentObservationSnapshot();
     const reportState = this.observationLoading || this.observationReports === null ? "loading" : this.observationError.length > 0 ? "error" : this.observationReports.length === 0 ? "missing" : snapshot.analysis === null ? "empty" : "ready";
     if (reportState !== "ready") {
       body.classList.add("is-state");
@@ -10553,7 +11288,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       return card;
     }
     const maturity = snapshot.analysis !== null ? observationSnapshotMaturity(snapshot) : computeObservationMaturity(this.observationReports);
-    const visibleAnalysis = snapshot.analysis === null ? null : constrainObservationAnalysisForMaturity(snapshot.analysis, maturity);
+    const visibleAnalysis = snapshot.analysis === null ? null : snapshot.analysis.schemaVersion === 2 ? snapshot.analysis : constrainObservationAnalysisForMaturity(snapshot.analysis, maturity);
     const paths = new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));
     const freshness = deriveObservationFreshness(snapshot, this.observationReports, paths);
     body.createDiv({ cls: `mind-trace-observation-dashboard-status${freshness.stale ? " is-stale" : ""}`, text: freshness.stale ? "有新的依据" : "观照已生成" });
@@ -10565,13 +11300,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       card.classList.add("is-copy-compact");
     }
     body.createDiv({ cls: "mind-trace-observation-dashboard-summary", text: summary });
-    const changes = Array.isArray(visibleAnalysis?.changes) ? visibleAnalysis.changes : [];
+    const changes = visibleAnalysis?.schemaVersion === 2 ? visibleAnalysis.claims ?? [] : Array.isArray(visibleAnalysis?.changes) ? visibleAnalysis.changes : [];
     if (changes.length > 0) {
       const clues = body.createDiv({ cls: "mind-trace-observation-dashboard-clues", attr: { "aria-label": "观照变化线索" } });
       for (const item of changes.slice(0, 2)) {
         const clue = clues.createDiv({ cls: "mind-trace-observation-dashboard-clue" });
         clue.createSpan({ cls: "mind-trace-observation-dashboard-clue-dimension", text: item.dimension ?? "变化" });
-        clue.createSpan({ cls: "mind-trace-observation-dashboard-clue-value", text: `${item.before ?? "—"} → ${item.now ?? "—"}` });
+        clue.createSpan({ cls: "mind-trace-observation-dashboard-clue-value", text: visibleAnalysis?.schemaVersion === 2 ? item.statement : `${item.before ?? "—"} → ${item.now ?? "—"}` });
       }
     }
     const meta = body.createDiv({ cls: "mind-trace-observation-dashboard-meta" });
@@ -12685,7 +13420,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         const configured = normalizeReportFolderValue(this.plugin.settings[settingKey]);
         let resolved;
         try {
-          resolved = resolveReportFolder(this.plugin.settings, type);
+          resolved = type === "observation" ? observationFolder(this.plugin.settings) : resolveReportFolder(this.plugin.settings, type);
         } catch {
           resolved = "无法解析（请先设置有效的日记目录）";
         }
@@ -12763,6 +13498,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       });
     });
     addReportFolderSetting("monthly", "月报保存位置", "monthlyReportFolder");
+    addReportFolderSetting("observation", "观照保存位置", "observationFolder");
     const privacySection = this.createSection(
       "隐私与草稿",
       "心迹密码可选：设置后保护插件界面，不会加密 Vault 中的 Markdown 原文；未完成问答保存在插件 data.json 中。"
@@ -13403,7 +14139,7 @@ function eventMarkdownSection(events, options = {}) {
   };
   return `### 今日事件\n\n<!-- mind-trace-events: ${JSON.stringify(meta)} -->\n\n${eventMarkdownBody(events)}`;
 }
-function renderJournalSection(date, draft, entry) {
+function renderJournalSection(date, draft, entry, options = {}) {
   const insights = entry.insights.map((insight) => `- ${insight}`).join("\n");
   const facets = entry.facets.map(
     (facet) => `- **${facet.category.replace(/\n/g, " ")}**：${facet.summary.replace(/\n/g, " ")}`
@@ -13414,8 +14150,15 @@ function renderJournalSection(date, draft, entry) {
     ...answer.answer.split("\n").map(quoteCalloutLine),
     ">"
   ]).join("\n");
+  const transcriptBlock = typeof options.transcriptMarkdown === "string" && options.transcriptMarkdown.trim().length > 0 ? options.transcriptMarkdown.replace(/\r?\n+$/, "") : ["> [!info]- 原始问答", transcript].join("\n");
+  const sessionMeta = {
+    schema: JOURNAL_SCHEMA_VERSION,
+    generatedAt: options.generatedAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    source: options.source === "regenerated" ? "regenerated" : "conversation"
+  };
   return [
-    `## ${localTimeString(date)}`,
+    `## ${options.time ?? localTimeString(date)}`,
+    `<!-- mind-trace-session: ${JSON.stringify(sessionMeta)} -->`,
     "",
     "### 日记",
     "",
@@ -13428,7 +14171,7 @@ function renderJournalSection(date, draft, entry) {
     facets,
     "",
     ...ratingComparisonLines(draft),
-    "### 反思洞察",
+    "### 本次轻反思",
     "",
     insights,
     "",
@@ -13444,15 +14187,14 @@ function renderJournalSection(date, draft, entry) {
     "",
     themes,
     "",
-    "> [!info]- 原始问答",
-    transcript
+    transcriptBlock
   ].join("\n");
 }
 function renderNewJournal(date, draft, entry) {
   const dateString = localDateString(date);
   const frontmatter = {
     "mind-trace": true,
-    "mind-trace-version": 3,
+    "mind-trace-version": JOURNAL_SCHEMA_VERSION,
     date: dateString,
     mood: [draft.ratings.mood],
     energy: [draft.ratings.energy],
@@ -13490,7 +14232,7 @@ function updateJournalFrontmatter(frontmatterValue, ratings, themes) {
     throw new Error("日记属性已损坏");
   }
   const frontmatter = frontmatterValue;
-  frontmatter["mind-trace-version"] = 3;
+  frontmatter["mind-trace-version"] = JOURNAL_SCHEMA_VERSION;
   frontmatter.mood = [...numberArray(frontmatter.mood, "mood"), ratings.mood];
   frontmatter.energy = [
     ...numberArray(frontmatter.energy, "energy"),
@@ -13598,6 +14340,71 @@ function replaceSessionEventSection(content, sessionIndex, events, options = {})
   const updatedBlock = `${block.slice(0, eventHeading.index)}${replacement}${block.slice(nextHeading.index)}`;
   return `${content.slice(0, blockStart)}${updatedBlock}${content.slice(blockEnd)}`;
 }
+function regeneratedSessionValue(source, entry, assessment) {
+  return {
+    ...source,
+    version: JOURNAL_SCHEMA_VERSION,
+    source: "regenerated",
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    diary: entry.diary,
+    events: entry.events,
+    eventState: "ready",
+    eventSchema: EVENT_SCHEMA_VERSION,
+    eventSource: "daily",
+    eventReviewed: false,
+    facets: entry.facets,
+    ratings: {
+      mood: { selfScore: source.ratings.mood.selfScore, aiScore: assessment.mood.score, reason: assessment.mood.reason },
+      energy: { selfScore: source.ratings.energy.selfScore, aiScore: assessment.energy.score, reason: assessment.energy.reason },
+      stress: { selfScore: source.ratings.stress.selfScore, aiScore: assessment.stress.score, reason: assessment.stress.reason }
+    },
+    insights: entry.insights,
+    microAction: entry.microAction,
+    selfQuestion: entry.selfQuestion,
+    themes: entry.themes
+  };
+}
+function regeneratedSessionMarkdown(documentDate, replacement) {
+  const draft = {
+    entryDate: documentDate,
+    ratings: {
+      mood: replacement.source.ratings.mood.selfScore,
+      energy: replacement.source.ratings.energy.selfScore,
+      stress: replacement.source.ratings.stress.selfScore
+    },
+    answers: replacement.source.transcriptAnswers,
+    aiAssessment: replacement.assessment
+  };
+  return renderJournalSection(parseLocalDate(documentDate) ?? (/* @__PURE__ */ new Date()), draft, replacement.entry, {
+    time: replacement.source.time,
+    source: "regenerated",
+    generatedAt: replacement.generatedAt,
+    transcriptMarkdown: replacement.source.transcriptMarkdown
+  });
+}
+function updateJournalHeaderText(content, themes) {
+  let updated = content.replace(/^(mind-trace-version:)\s*\d+\s*$/m, `$1 ${JOURNAL_SCHEMA_VERSION}`);
+  if (updated === content && /^---\s*$/m.test(updated)) {
+    updated = updated.replace(/^---\s*$/m, `---\nmind-trace-version: ${JOURNAL_SCHEMA_VERSION}`);
+  }
+  const themeLine = `themes: [${[...new Set(themes)].map(yamlString).join(", ")}]`;
+  if (/^themes:\s*.*$/m.test(updated)) updated = updated.replace(/^themes:\s*.*$/m, themeLine);
+  return updated;
+}
+function replaceJournalSessionsContent(content, document2, replacements) {
+  const headings = [...content.matchAll(/^## \d{2}:\d{2}\s*$/gm)];
+  let updated = content;
+  for (const replacement of [...replacements].sort((left, right) => right.sessionIndex - left.sessionIndex)) {
+    const heading = headings[replacement.sessionIndex];
+    if (heading === void 0) throw new Error("要更新的日记会话已经不存在");
+    const start = heading.index;
+    const end = headings[replacement.sessionIndex + 1]?.index ?? content.length;
+    const separator = replacement.sessionIndex + 1 < headings.length ? "\n\n---\n\n" : "\n";
+    updated = `${updated.slice(0, start)}${regeneratedSessionMarkdown(document2.date, replacement)}${separator}${updated.slice(end)}`;
+  }
+  const parsed = parseSavedJournal(updated, parseFrontmatter(updated));
+  return updateJournalHeaderText(updated, parsed.sessions.flatMap((session) => session.themes));
+}
 var JournalRepository = class {
   constructor(app) {
     this.app = app;
@@ -13689,6 +14496,17 @@ ${sections}`);
       throw new Error("日记在编辑期间发生了修改，请重新检查后再保存");
     }
     const updated = replaceSessionEventSection(content, sessionIndex, events, { source: "manual", reviewed: true });
+    await this.app.vault.modify(file, updated);
+    return updated;
+  }
+  async updateJournalSessions(file, document2, replacements, expectedMtime) {
+    if (!(file instanceof import_obsidian6.TFile) || file.stat.mtime !== expectedMtime) {
+      throw new Error("日记在生成校样后发生了修改，请重新生成后再保存");
+    }
+    const content = await this.app.vault.cachedRead(file);
+    if (file.stat.mtime !== expectedMtime) throw new Error("日记在读取期间发生了修改，请重新生成后再保存");
+    const updated = replaceJournalSessionsContent(content, document2, replacements);
+    parseSavedJournal(updated, parseFrontmatter(updated));
     await this.app.vault.modify(file, updated);
     return updated;
   }
@@ -13871,14 +14689,16 @@ function weeklyEventSnapshotLines(source, options = {}) {
 function weeklyReportMarkdown(source, report) {
   const stats = source.stats;
   const previous = source.previousStats;
-  const changes = report.changes.map((item) => `- ${item.observation}${evidenceSuffix(item.evidenceDates)}`).join("\n");
-  const causes = report.possibleCauses.map((item) => `- ${item.hypothesis}${evidenceSuffix(item.evidenceDates)}`).join("\n");
-  const themes = report.themes.map((item) => `- **${inlineMarkdown(item.name)}**：${item.observation}`).join("\n");
-  const clues = report.emotionReading.clues.map((item) => `> - ${item}`).join("\n");
+  const line = (text, item) => `- ${text}${evidenceSuffix(item.evidenceDates)}${item.eventRefs?.length > 0 ? ` <!-- mind-trace-event-refs: ${item.eventRefs.join(",")} -->` : ""}`;
+  const highlights = report.highlights.map((item) => line(item.text, item)).join("\n") || "_本周没有足够的重点记录。_";
+  const progress = report.progress.map((item) => line(`**${inlineMarkdown(item.subject)}｜${v4ReportEnumLabel(item.status)}**：${item.text}`, item)).join("\n") || "_本周没有可确认的状态变化。_";
+  const openLoops = report.openLoops.map((item) => line(`**${v4ReportEnumLabel(item.status)}**：${item.text}`, item)).join("\n") || "_本周没有明确的未决事项。_";
+  const themes = report.themes.map((item) => line(`**${inlineMarkdown(item.name)}**：${item.observation}`, item)).join("\n") || "_本周没有足够的重复主题。_";
+  const carryForward = report.carryForward.map((item) => line(item.text, item)).join("\n") || "_没有记录到用户明确带往下周的事项。_";
   return [
     "---",
     "mind-trace-report: true",
-    "mind-trace-report-version: 3",
+    "mind-trace-report-version: 4",
     "report-type: weekly",
     `period-start: ${source.period.start}`,
     `period-end: ${source.period.end}`,
@@ -13906,40 +14726,29 @@ function weeklyReportMarkdown(source, report) {
     `| 精力 | ${scoreCell(stats.energy)} | ${scoreDelta(stats, previous, "energy")} |`,
     `| 压力 | ${scoreCell(stats.stress)} | ${scoreDelta(stats, previous, "stress")} |`,
     "",
-    "## 发生的变化",
-    "",
-    changes,
-    "",
-    "## 可能的原因",
-    "",
-    causes,
-    "",
-    "## AI 情绪假设",
-    "",
-    "> [!note] 这是根据文字线索的假设性解读，不是心理或医学诊断。",
-    `> ${report.emotionReading.hypothesis}`,
-    ">",
-    clues,
-    ">",
-    `> **另一种可能：**${report.emotionReading.alternative}`,
-    "",
     "## 本周事件图谱",
     "",
     ...weeklyEventSnapshotLines(source),
     "",
-    "## 反复出现的主题",
+    "## 本周发生",
+    "",
+    highlights,
+    "",
+    "## 进展与状态",
+    "",
+    progress,
+    "",
+    "## 尚未结束",
+    "",
+    openLoops,
+    "",
+    "## 本周反复出现",
     "",
     themes,
     "",
-    "## 下周最小的一步",
+    "## 明确带到下周",
     "",
-    `**${report.nextStep.action}**`,
-    "",
-    report.nextStep.reason,
-    "",
-    "## 留给自己的问题",
-    "",
-    report.selfQuestion,
+    carryForward,
     source.truncated ? "\n> [!info] 本周日记较长，AI 分析使用了截取后的摘录。" : "",
     ""
   ].join("\n");
@@ -13961,14 +14770,15 @@ function monthlyReportMarkdown(source, report) {
   const stats = source.stats;
   const previous = source.previousStats;
   const comparisonLabel = source.period.status === "partial" ? "较上月同期" : "较上月";
-  const changes = report.changes.map((item) => `- ${item.observation}${evidenceSuffix(item.evidenceDates)}`).join("\n");
-  const causes = report.possibleCauses.map((item) => `- ${item.hypothesis}${evidenceSuffix(item.evidenceDates)}`).join("\n");
-  const themes = report.themes.map((item) => `- **${inlineMarkdown(item.name)}**：${item.observation}`).join("\n");
-  const clues = report.emotionReading.clues.map((item) => `> - ${item}`).join("\n");
+  const line = (text, item) => `- ${text}${evidenceSuffix(item.evidenceDates)}${item.eventRefs?.length > 0 ? ` <!-- mind-trace-event-refs: ${item.eventRefs.join(",")} -->` : ""}`;
+  const turningPoints = report.turningPoints.map((item) => line(item.text, item)).join("\n") || "_本月没有足够证据标记跨周转折。_";
+  const evolution = report.themeEvolution.map((item) => line(`**${inlineMarkdown(item.name)}｜${v4ReportEnumLabel(item.trajectory)}**：${item.observation}`, item)).join("\n") || "_本月没有足够的跨周主题演变。_";
+  const threads = report.threads.map((item) => line(`**${v4ReportEnumLabel(item.type)}｜${inlineMarkdown(item.name)}｜${v4ReportEnumLabel(item.trajectory)}**：${item.observation}`, item)).join("\n") || "_本月没有可确认的持续事项变化。_";
+  const carryForward = report.carryForward.map((item) => line(item.text, item)).join("\n") || "_没有记录到明确带入下月的事项。_";
   return [
     "---",
     "mind-trace-report: true",
-    "mind-trace-report-version: 3",
+    "mind-trace-report-version: 4",
     "report-type: monthly",
     `period-start: ${source.period.start}`,
     `period-end: ${source.period.end}`,
@@ -14008,36 +14818,21 @@ function monthlyReportMarkdown(source, report) {
     "",
     ...weeklyEventSnapshotLines(source, { scope: "本月" }),
     "",
-    "## 发生的变化",
+    "## 跨周转折",
     "",
-    changes,
+    turningPoints,
     "",
-    "## 可能的原因",
+    "## 主题如何演变",
     "",
-    causes,
+    evolution,
     "",
-    "## AI 情绪假设",
+    "## 持续推进与停滞",
     "",
-    "> [!note] 这是根据文字线索的假设性解读，不是心理或医学诊断。",
-    `> ${report.emotionReading.hypothesis}`,
-    ">",
-    clues,
-    ">",
-    `> **另一种可能：**${report.emotionReading.alternative}`,
+    threads,
     "",
-    "## 反复出现的主题",
+    "## 带入下月的未决事项",
     "",
-    themes,
-    "",
-    "## 下月最小的一步",
-    "",
-    `**${report.nextStep.action}**`,
-    "",
-    report.nextStep.reason,
-    "",
-    "## 留给自己的问题",
-    "",
-    report.selfQuestion,
+    carryForward,
     source.truncated ? "\n> [!info] 本月日记较长，AI 分析使用了截取后的摘录。" : "",
     ""
   ].join("\n");
@@ -14197,10 +14992,7 @@ var WeeklyReportRepository = class {
             `自评：心情 ${session.ratings.mood.selfScore}/5，精力 ${session.ratings.energy.selfScore}/5，压力 ${session.ratings.stress.selfScore}/5`,
             `日记：${session.diary}`,
             session.events.length > 0 ? `事件：${session.events.map((event) => `${EVENT_TYPE_LABELS[event.type]}｜${EVENT_STATUS_LABELS[event.status]}｜${event.title}（${event.arguments.map((argument) => `${argument.label}：${argument.entity.name}`).join("、")}；${event.traces.map((trace) => `${EVENT_TRACE_KIND_LABELS[trace.kind]}：${trace.text}`).join("、")}）`).join("；")}` : "",
-            session.facets.length > 0 ? `切片：${session.facets.map((item) => `${item.category}：${item.summary}`).join("；")}` : "",
-            session.insights.length > 0 ? `已有洞察：${session.insights.join("；")}` : "",
-            session.microAction.length > 0 ? `微行动：${session.microAction}` : "",
-            session.selfQuestion.length > 0 ? `自我问题：${session.selfQuestion}` : ""
+            session.facets.length > 0 ? `记录切片：${session.facets.map((item) => `${item.category}：${item.summary}`).join("；")}` : ""
           ].filter((line) => line.length > 0).join("\n");
           const block = rawBlock.slice(0, 3e3);
           if (rawBlock.length > block.length) {
@@ -14373,6 +15165,211 @@ var MonthlyReportRepository = class extends WeeklyReportRepository {
     return await this.app.vault.create(path, content);
   }
 };
+function observationFolder(settings) {
+  const configured = normalizeReportFolderValue(settings?.observationFolder);
+  if (configured.length > 0) return configured;
+  const journalFolder = normalizeReportFolderValue(settings?.journalFolder);
+  if (journalFolder.length === 0) throw new Error("日记目录不能为空");
+  return (0, import_obsidian6.normalizePath)(`${journalFolder}/观照`);
+}
+function observationStatusLabel(status) {
+  return status === "confirmed" ? "确认" : status === "rejected" ? "否认" : "暂存";
+}
+function observationStatusValue(label) {
+  return label === "确认" ? "confirmed" : label === "否认" ? "rejected" : "pending";
+}
+function observationFrontmatter(snapshot) {
+  const sources = Array.isArray(snapshot.sources) ? snapshot.sources : [];
+  const starts = sources.map((source) => source.periodStart).filter(Boolean).sort();
+  const ends = sources.map((source) => source.periodEnd).filter(Boolean).sort();
+  return [
+    "---",
+    "mind-trace-observation: true",
+    "mind-trace-observation-version: 2",
+    `observation-id: ${yamlString(snapshot.id)}`,
+    `generated-at: ${snapshot.generatedAt}`,
+    `period-start: ${starts[0] ?? ""}`,
+    `period-end: ${ends[ends.length - 1] ?? ""}`,
+    `stage: ${snapshot.maturity?.stage ?? "initial"}`,
+    `source-report-count: ${sources.length}`,
+    "---"
+  ].join("\n");
+}
+function observationEvidenceMarkdown(item) {
+  const time = item.time ? ` ${item.time}` : "";
+  const quote = item.quote ? `；“${inlineMarkdown(item.quote)}”` : "";
+  return `${item.date}${time}｜${inlineMarkdown(item.title || "未命名事件")}：${inlineMarkdown(item.summary || "无摘要")}${quote}`;
+}
+function observationSubsection(block, heading) {
+  const marker = `#### ${heading}`;
+  const start = block.indexOf(marker);
+  if (start === -1) return "";
+  const contentStart = start + marker.length;
+  const next = block.indexOf("\n#### ", contentStart);
+  return block.slice(contentStart, next === -1 ? block.length : next).trim();
+}
+function observationMarkdown(snapshot) {
+  const analysis = snapshot.analysis;
+  const evidenceById = new Map((snapshot.evidence ?? []).map((item) => [item.id, item]));
+  const lines = [observationFrontmatter(snapshot), "", "# 最近的变化全景", "", "## 概览", "", analysis.summary, ""];
+  for (const dimension of OBSERVATION_DIMENSIONS) {
+    const claims = analysis.claims.filter((claim) => claim.dimension === dimension);
+    if (claims.length === 0) continue;
+    lines.push(`## ${dimension}`, "");
+    for (const claim of claims) {
+      const metrics = observationClaimMetrics(claim, snapshot.evidence ?? [], snapshot.sources ?? []);
+      const metadata = { id: claim.key, dimension: claim.dimension, layer: claim.layer, support: claim.supportEvidenceRefs, counter: claim.counterEvidenceRefs };
+      const feedback = snapshot.feedback?.[claim.key] ?? { status: "pending", correction: "" };
+      lines.push(`### ${claim.statement}`, `<!-- mind-trace-observation-claim: ${JSON.stringify(metadata)} -->`, "");
+      lines.push(`**此前：**${claim.before || "暂无明确对照"}`, `**现在：**${claim.now || "暂无明确对照"}`, `**线索阶段：**${metrics.signal}`, `**依据充分度：**${metrics.sufficiency}`, `**依据统计：**支持 ${metrics.support.length} · 反例 ${metrics.counter.length} · 独立周期 ${metrics.independentPeriods} · 跨度 ${metrics.spanDays} 天`, "");
+      lines.push("#### 支持记录", "", ...(metrics.support.length > 0 ? metrics.support.map((item) => `- [${item.id}] ${observationEvidenceMarkdown(item)}`) : ["_暂无可用支持记录。_"]), "");
+      lines.push("#### 反例", "", ...(metrics.counter.length > 0 ? metrics.counter.map((item) => `- [${item.id}] ${observationEvidenceMarkdown(item)}`) : ["_暂未找到反例，不等于不存在反例。_"]), "");
+      lines.push("#### 另一种解释", "", claim.alternative || "这条事实性观察暂不需要替代解释。", "", "#### 仍缺少的信息", "", claim.missingInformation || "暂无。", "", "#### 可以问自己", "", claim.verificationQuestion || "这条记录与你的实际体验一致吗？", "", "#### 我的校准", "", `- 状态：${observationStatusLabel(feedback.status)}`, `- 修正：${String(feedback.correction ?? "").replace(/\n/g, " ")}`, "", `<!-- mind-trace-observation-claim-end: ${claim.key} -->`, "");
+    }
+  }
+  lines.push("## 接下来值得观察", "", analysis.nextObservation, "", "## 证据索引", "");
+  for (const item of snapshot.evidence ?? []) {
+    lines.push(`<!-- mind-trace-observation-evidence: ${JSON.stringify(item)} -->`, `- [${item.id}] ${observationEvidenceMarkdown(item)}`);
+  }
+  lines.push("", "## 来源报告", "");
+  for (const source of snapshot.sources ?? []) {
+    lines.push(`<!-- mind-trace-observation-source: ${JSON.stringify(source)} -->`, `- [[${source.filePath}|${source.type === "monthly" ? "月报" : "周报"} ${source.periodStart} — ${source.periodEnd}]]`);
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
+function parseObservationMarkdown(content, filePath = "") {
+  const frontmatter = parseFrontmatter(content, "观照");
+  if (frontmatter["mind-trace-observation"] !== true) throw new Error("不是心迹观照文件");
+  const legacyMatch = content.match(/<!-- mind-trace-observation-legacy: (\{[^\n]+\}) -->/);
+  if (legacyMatch !== null) {
+    const legacy = JSON.parse(legacyMatch[1]);
+    return { ...normalizeSelfObservation(legacy), id: String(frontmatter["observation-id"] ?? ""), filePath, legacy: true };
+  }
+  if (Number(frontmatter["mind-trace-observation-version"]) !== 2) throw new Error("不支持的观照格式版本");
+  const summary = weeklyReportSection(content, "概览");
+  const nextObservation = weeklyReportSection(content, "接下来值得观察");
+  const evidence = [];
+  const sources = [];
+  for (const match of content.matchAll(/<!-- mind-trace-observation-evidence: (\{[^\n]+\}) -->/g)) {
+    try { evidence.push(JSON.parse(match[1])); } catch { throw new Error("证据索引格式损坏"); }
+  }
+  for (const match of content.matchAll(/<!-- mind-trace-observation-source: (\{[^\n]+\}) -->/g)) {
+    try { sources.push(JSON.parse(match[1])); } catch { throw new Error("来源报告索引格式损坏"); }
+  }
+  const claims = [];
+  const feedback = {};
+  const claimPattern = /### ([^\n]+)\n<!-- mind-trace-observation-claim: (\{[^\n]+\}) -->\n([\s\S]*?)<!-- mind-trace-observation-claim-end: ([^>]+) -->/g;
+  for (const match of content.matchAll(claimPattern)) {
+    let metadata;
+    try { metadata = JSON.parse(match[2]); } catch { throw new Error(`观察“${match[1]}”的隐藏引用格式损坏`); }
+    const id = String(metadata.id || match[4]).trim() || observationItemKey("claim", { dimension: metadata.dimension, observation: match[1] }, claims.length);
+    const block = match[3];
+    const field = (label) => block.match(new RegExp(`\\*\\*${label}：\\*\\*([^\\n]*)`))?.[1]?.trim() ?? "";
+    const calibration = observationSubsection(block, "我的校准");
+    const status = observationStatusValue(calibration.match(/^- 状态：([^\n]+)/m)?.[1]?.trim() ?? "暂存");
+    const correction = calibration.match(/^- 修正：([^\n]*)/m)?.[1]?.trim() ?? "";
+    const claim = {
+      key: id,
+      dimension: observationDimension(metadata.dimension),
+      layer: ["fact", "inference", "hypothesis"].includes(metadata.layer) ? metadata.layer : "inference",
+      statement: match[1].trim(), before: field("此前"), now: field("现在"),
+      supportEvidenceRefs: Array.isArray(metadata.support) ? metadata.support : [],
+      counterEvidenceRefs: Array.isArray(metadata.counter) ? metadata.counter : [],
+      alternative: observationSubsection(block, "另一种解释"),
+      missingInformation: observationSubsection(block, "仍缺少的信息"),
+      verificationQuestion: observationSubsection(block, "可以问自己")
+    };
+    claims.push(claim);
+    feedback[id] = { status, correction, updatedAt: "" };
+  }
+  const evidenceIds = new Set(evidence.map((item) => item.id));
+  const broken = claims.find((claim) => [...claim.supportEvidenceRefs, ...claim.counterEvidenceRefs].some((id) => !evidenceIds.has(id)));
+  if (broken !== void 0) throw new Error(`观察“${broken.statement}”的证据引用已经断裂`);
+  if (summary.length === 0 || nextObservation.length === 0 || claims.length === 0) throw new Error("观照正文缺少概览、观察条目或后续观察");
+  return {
+    version: 2,
+    id: String(frontmatter["observation-id"] ?? ""),
+    generatedAt: String(frontmatter["generated-at"] ?? ""),
+    maturity: { stage: String(frontmatter.stage ?? "initial") },
+    sources,
+    evidence,
+    analysis: { schemaVersion: 2, summary, claims, nextObservation },
+    feedback,
+    filePath,
+    legacy: false
+  };
+}
+function legacyObservationMarkdown(snapshot) {
+  const normalized = normalizeSelfObservation(snapshot);
+  const generatedAt = normalized.generatedAt || (/* @__PURE__ */ new Date()).toISOString();
+  const id = `obs-legacy-${generatedAt.replace(/[^0-9]/g, "").slice(0, 17)}`;
+  const starts = normalized.sources.map((source) => source.periodStart).filter(Boolean).sort();
+  const ends = normalized.sources.map((source) => source.periodEnd).filter(Boolean).sort();
+  const payload = JSON.stringify({ ...normalized, generatedAt }).replace(/-->/g, "--\\u003e");
+  const summary = normalized.analysis?.summary ?? "由旧版 data.json 迁移的历史观照。";
+  const analysis = normalized.analysis ?? {};
+  const lines = ["---", "mind-trace-observation: true", "mind-trace-observation-version: 1", `observation-id: ${yamlString(id)}`, `generated-at: ${generatedAt}`, `period-start: ${starts[0] ?? ""}`, `period-end: ${ends[ends.length - 1] ?? ""}`, `stage: ${normalized.maturity?.stage ?? "initial"}`, `source-report-count: ${normalized.sources.length}`, "---", "", "# 历史观照", "", "## 概览", "", summary, "", `<!-- mind-trace-observation-legacy: ${payload} -->`, "", "> 此文件由旧版 data.json 迁移，保留旧栏目语义；下一次观照会使用新版统一观察格式。", ""];
+  if (analysis.changes?.length) lines.push("## 变化描线", "", ...analysis.changes.map((item) => `- **${item.dimension}｜${item.signal ?? item.level ?? "线索"}**：${item.before} → ${item.now}`), "");
+  if (analysis.perspectives?.length) lines.push("## 从不同角度看", "", ...analysis.perspectives.map((item) => `- **${item.perspective}｜${item.layer}**：${item.observation}`), "");
+  if (analysis.hypotheses?.length) lines.push("## 值得验证的假设", "", ...analysis.hypotheses.flatMap((item) => [`### ${item.statement}`, "", `- 另一种解释：${item.alternative}`, `- 可以问自己：${item.question}`, ""]));
+  if (analysis.roles?.length) lines.push("## 最近承担的角色", "", ...analysis.roles.map((item) => `- **${item.label}**：${item.observation}`), "");
+  if (analysis.nextStep || analysis.selfQuestion) lines.push("## 旧版后续", "", analysis.nextStep ? `- 下一小步：${analysis.nextStep}` : "", analysis.selfQuestion ? `- 留给自己：${analysis.selfQuestion}` : "", "");
+  return `${lines.join("\n").trim()}\n`;
+}
+function observationFileStem(date = /* @__PURE__ */ new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}--${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+var ObservationRepository = class extends WeeklyReportRepository {
+  async list() {
+    const results = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const cached = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (cached !== void 0 && cached?.["mind-trace-observation"] !== true) continue;
+      let content;
+      try {
+        content = await this.app.vault.cachedRead(file);
+        const info = (0, import_obsidian6.getFrontMatterInfo)(content);
+        if (!info.exists) continue;
+        const parsed = (0, import_obsidian6.parseYaml)(info.frontmatter);
+        if (parsed?.["mind-trace-observation"] !== true) continue;
+        const snapshot = parseObservationMarkdown(content, file.path);
+        results.push({ file, snapshot, error: "" });
+      } catch (error) {
+        if (cached?.["mind-trace-observation"] === true || content?.includes("mind-trace-observation: true")) results.push({ file, snapshot: null, error: errorMessage(error) });
+      }
+    }
+    results.sort((left, right) => String(right.snapshot?.generatedAt ?? "").localeCompare(String(left.snapshot?.generatedAt ?? "")) || right.file.stat.mtime - left.file.stat.mtime);
+    return results;
+  }
+  async save(settings, snapshot, content = null) {
+    const folder = observationFolder(settings);
+    await this.ensureFolder(folder);
+    const generated = new Date(snapshot.generatedAt || Date.now());
+    const stem = observationFileStem(Number.isNaN(generated.getTime()) ? /* @__PURE__ */ new Date() : generated);
+    let suffix = 1;
+    let path = (0, import_obsidian6.normalizePath)(`${folder}/${stem}.md`);
+    while (this.app.vault.getAbstractFileByPath(path) !== null) {
+      suffix += 1;
+      path = (0, import_obsidian6.normalizePath)(`${folder}/${stem}-${suffix}.md`);
+    }
+    const file = await this.app.vault.create(path, content ?? observationMarkdown(snapshot));
+    const verified = parseObservationMarkdown(await this.app.vault.cachedRead(file), file.path);
+    return { file, snapshot: verified };
+  }
+  async updateFeedback(filePath, claimId, value, expectedMtime = null) {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian6.TFile)) throw new Error("观照文件已不存在");
+    if (expectedMtime !== null && file.stat.mtime !== expectedMtime) throw new Error("观照文件已在其他位置修改，请重新打开后再校准");
+    const startingMtime = file.stat.mtime;
+    const snapshot = parseObservationMarkdown(await this.app.vault.cachedRead(file), file.path);
+    if (!snapshot.analysis?.claims?.some((claim) => claim.key === claimId)) throw new Error("找不到要校准的观察条目");
+    snapshot.feedback[claimId] = { status: ["confirmed", "rejected", "pending"].includes(value?.status) ? value.status : "pending", correction: String(value?.correction ?? "").slice(0, 800), updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    if (file.stat.mtime !== startingMtime) throw new Error("观照文件在校准期间发生了修改，请重新打开后再保存");
+    await this.app.vault.modify(file, observationMarkdown(snapshot));
+    return parseObservationMarkdown(await this.app.vault.cachedRead(file), file.path);
+  }
+};
 
 // src/main.ts
 var MindTracePlugin = class extends import_obsidian7.Plugin {
@@ -14381,6 +15378,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   repository;
   weeklyReportRepository;
   monthlyReportRepository;
+  observationRepository;
+  legacySelfObservation = emptySelfObservation();
   historyIndex;
   weeklyReportAttempts = /* @__PURE__ */ new Set();
   weeklyReportInFlight = /* @__PURE__ */ new Map();
@@ -14400,6 +15399,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.repository = new JournalRepository(this.app);
     this.weeklyReportRepository = new WeeklyReportRepository(this.app);
     this.monthlyReportRepository = new MonthlyReportRepository(this.app);
+    this.observationRepository = new ObservationRepository(this.app);
     this.historyIndex = new JournalHistoryIndex(this);
     this.registerView(
       JOURNAL_VIEW_TYPE,
@@ -14412,6 +15412,10 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.registerView(
       WEEKLY_REPORT_VIEW_TYPE,
       (leaf) => new SavedWeeklyReportView(leaf, this)
+    );
+    this.registerView(
+      OBSERVATION_VIEW_TYPE,
+      (leaf) => new SavedObservationView(leaf, this)
     );
     this.addRibbonIcon("notebook-pen", "打开心迹记录", () => {
       void this.openJournal();
@@ -14466,6 +15470,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       })
     );
     this.app.workspace.onLayoutReady(() => {
+      void this.migrateLegacyObservation();
       void this.normalizeRestoredViews();
       void this.protectOpenMindTraceFiles();
     });
@@ -14504,29 +15509,18 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   async saveSettings() {
     await this.persist();
   }
-  async saveSelfObservation(snapshot) {
-    this.settings.selfObservation = normalizeSelfObservation(snapshot);
-    await this.persist();
+  async saveObservationFeedback(filePath, key, feedback) {
+    if (typeof filePath !== "string" || filePath.length === 0 || typeof key !== "string" || key.length === 0) return null;
+    const snapshot = await this.observationRepository.updateFeedback(filePath, key, feedback);
+    this.emitMetricsChanged();
     this.refreshJournalViews();
+    return snapshot;
   }
-  async saveObservationFeedback(key, feedback) {
-    const current = normalizeSelfObservation(this.settings.selfObservation);
-    if (typeof key !== "string" || key.length === 0) {
-      return;
-    }
-    const status = ["confirmed", "rejected", "pending"].includes(feedback?.status) ? feedback.status : "pending";
-    current.feedback[key] = {
-      status,
-      correction: typeof feedback?.correction === "string" ? feedback.correction.slice(0, 800) : "",
-      updatedAt: /* @__PURE__ */ new Date().toISOString()
-    };
-    this.settings.selfObservation = current;
-    await this.persist();
-    this.refreshJournalViews();
-  }
-  async deleteSelfObservation() {
-    this.settings.selfObservation = emptySelfObservation();
-    await this.persist();
+  async deleteSelfObservation(filePath) {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian7.TFile)) throw new Error("观照文件已不存在");
+    await this.app.fileManager.trashFile(file);
+    this.emitMetricsChanged();
     this.refreshJournalViews();
   }
   async generateSelfObservation(reports) {
@@ -14534,19 +15528,46 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       throw new Error("至少需要 1 份可解析回顾才能生成观照");
     }
     const maturity = computeObservationMaturity(reports);
-    const current = normalizeSelfObservation(this.settings.selfObservation);
-    const feedbackContext = observationFeedbackContext(current.analysis, current.feedback);
+    const existing = await this.observationRepository.list();
+    const current = existing.find((item) => item.snapshot !== null)?.snapshot ?? emptySelfObservation();
+    const feedbackContext = current.analysis?.schemaVersion === 2 ? Object.fromEntries((current.analysis.claims ?? []).flatMap((claim) => {
+      const value = current.feedback?.[claim.key];
+      return value === void 0 ? [] : [[claim.key, { type: "claim", text: claim.statement, status: value.status, correction: value.correction ?? "" }]];
+    })) : observationFeedbackContext(current.analysis, current.feedback);
     const analysis = await generateObservation(this.createProvider(), reports, feedbackContext, maturity);
+    const catalog = observationEvidenceCatalog(reports, 60);
+    const referenced = new Set(analysis.claims.flatMap((claim) => [...claim.supportEvidenceRefs, ...claim.counterEvidenceRefs]));
+    const evidence = catalog.filter((item) => referenced.has(item.id)).slice(0, 80);
+    const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
     const snapshot = {
-      version: 1,
-      generatedAt: /* @__PURE__ */ new Date().toISOString(),
-      sources: reports.map((item) => ({ type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt })),
+      version: 2,
+      id: `obs-${generatedAt.replace(/[^0-9]/g, "").slice(0, 17)}-${Math.random().toString(36).slice(2, 8)}`,
+      generatedAt,
+      sources: reports.map((item) => ({ type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt, modifiedAt: this.app.vault.getAbstractFileByPath(item.filePath)?.stat?.mtime ?? 0 })),
       maturity,
       analysis,
-      feedback: current.feedback
+      evidence,
+      feedback: {}
     };
-    await this.saveSelfObservation(snapshot);
-    return snapshot;
+    const saved = await this.observationRepository.save(this.settings, snapshot);
+    this.emitMetricsChanged();
+    this.refreshJournalViews();
+    return saved.snapshot;
+  }
+  async migrateLegacyObservation() {
+    const legacy = normalizeSelfObservation(this.legacySelfObservation);
+    if (legacy.analysis === null) return;
+    try {
+      const existing = await this.observationRepository.list();
+      const sameTime = existing.some((item) => item.snapshot?.generatedAt === legacy.generatedAt && item.snapshot?.legacy === true);
+      if (!sameTime) await this.observationRepository.save(this.settings, { generatedAt: legacy.generatedAt || (/* @__PURE__ */ new Date()).toISOString() }, legacyObservationMarkdown(legacy));
+      this.legacySelfObservation = emptySelfObservation();
+      await this.persist();
+      this.emitMetricsChanged();
+      this.refreshJournalViews();
+    } catch (error) {
+      showMindTraceNotice(`旧观照迁移失败：${errorMessage(error)}。旧数据仍保留，重载后会重试。`);
+    }
   }
   async saveProviderSettings() {
     this.settings.credentialInitialized = true;
@@ -15074,6 +16095,9 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
         leaf.view.clearEventState();
       }
     }
+    for (const leaf of this.app.workspace.getLeavesOfType(OBSERVATION_VIEW_TYPE)) {
+      if (leaf.view instanceof SavedObservationView) leaf.view.render();
+    }
     if (this.privacyTimer !== null) {
       window.clearTimeout(this.privacyTimer);
       this.privacyTimer = null;
@@ -15113,6 +16137,9 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       if (leaf.view instanceof SavedWeeklyReportView) {
         leaf.view.render(true);
       }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(OBSERVATION_VIEW_TYPE)) {
+      if (leaf.view instanceof SavedObservationView) leaf.view.render();
     }
   }
   async closeProtectedSources() {
@@ -15279,7 +16306,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   async isMindTraceFile(file) {
     const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
     if (frontmatter !== void 0) {
-      return frontmatter["mind-trace"] === true || frontmatter["mind-trace-report"] === true;
+      return frontmatter["mind-trace"] === true || frontmatter["mind-trace-report"] === true || frontmatter["mind-trace-observation"] === true;
     }
     const content = await this.app.vault.cachedRead(file);
     const info = (0, import_obsidian7.getFrontMatterInfo)(content);
@@ -15290,10 +16317,13 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       return false;
     }
-    return Reflect.get(parsed, "mind-trace") === true || Reflect.get(parsed, "mind-trace-report") === true;
+    return Reflect.get(parsed, "mind-trace") === true || Reflect.get(parsed, "mind-trace-report") === true || Reflect.get(parsed, "mind-trace-observation") === true;
   }
   async protectedViewType(file) {
     const cached = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (cached?.["mind-trace-observation"] === true) {
+      return OBSERVATION_VIEW_TYPE;
+    }
     if (cached?.["mind-trace-report"] === true) {
       return WEEKLY_REPORT_VIEW_TYPE;
     }
@@ -15304,7 +16334,11 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       const content = await this.app.vault.cachedRead(file);
       const info = (0, import_obsidian7.getFrontMatterInfo)(content);
       const parsed = info.exists ? (0, import_obsidian7.parseYaml)(info.frontmatter) : null;
-      return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Reflect.get(parsed, "mind-trace-report") === true ? WEEKLY_REPORT_VIEW_TYPE : SAVED_JOURNAL_VIEW_TYPE;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (Reflect.get(parsed, "mind-trace-observation") === true) return OBSERVATION_VIEW_TYPE;
+        if (Reflect.get(parsed, "mind-trace-report") === true) return WEEKLY_REPORT_VIEW_TYPE;
+      }
+      return SAVED_JOURNAL_VIEW_TYPE;
     } catch {
       return SAVED_JOURNAL_VIEW_TYPE;
     }
@@ -15368,14 +16402,15 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     if (hadLegacyQuestionLayout) {
       delete this.settings.questionLayout;
     }
-    for (const key of ["weeklyReportFolder", "monthlyReportFolder"]) {
+    for (const key of ["weeklyReportFolder", "monthlyReportFolder", "observationFolder"]) {
       const normalized = normalizeReportFolderValue(this.settings[key]);
       if (this.settings[key] !== normalized) {
         reportFolderSettingsChanged = true;
       }
       this.settings[key] = normalized;
     }
-    this.settings.selfObservation = normalizeSelfObservation(loadedSettings.selfObservation);
+    this.legacySelfObservation = normalizeSelfObservation(loadedSettings.selfObservation);
+    delete this.settings.selfObservation;
     this.settings.weeklyReportAutoGenerate = this.settings.weeklyReportAutoGenerate !== false;
     this.settings.weeklyReportMinimumDays = Math.min(
       7,
@@ -15487,8 +16522,11 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     return true;
   }
   async persist() {
+    const settings = { ...this.settings };
+    delete settings.selfObservation;
+    if (this.legacySelfObservation?.analysis !== null) settings.selfObservation = this.legacySelfObservation;
     const data = {
-      settings: this.settings,
+      settings,
       draft: this.draft
     };
     await this.saveData(data);

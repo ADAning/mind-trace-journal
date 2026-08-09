@@ -6402,6 +6402,24 @@ button.mind-trace-event-ledger-title:hover {
   margin-top: var(--size-4-2);
 }
 
+/* Report v4 reuses the v3 reader grammar. Only its information architecture
+   differs; overview, metrics, evidence rows, and paired sections stay visual
+   siblings of earlier reports. */
+.mind-trace-view.mind-trace-saved-weekly-report .mind-trace-weekly-analysis-grid.mind-trace-v4-analysis-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mind-trace-view .mind-trace-v4-report-empty {
+  margin-top: 16px;
+  color: var(--text-faint);
+}
+
+.mind-trace-view .mind-trace-v4-rhythm-observations {
+  margin-top: 16px;
+  padding-top: 4px;
+  border-top: 1px solid var(--mind-trace-reader-line);
+}
+
 .mind-trace-saved-weekly-report .mind-trace-weekly-evidence-dates time {
   padding: 2px 7px;
   border: 1px solid color-mix(in srgb, var(--mind-trace-ink-blue) 24%, var(--mind-trace-hairline));
@@ -13249,4 +13267,186 @@ button.mind-trace-theme-filter-button:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mind-trace-journal-regeneration-modal {
+  width: min(920px, calc(100vw - 32px));
+}
+
+.mind-trace-journal-regeneration-preview-body {
+  max-height: min(68vh, 760px);
+  margin: 18px 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-secondary);
+}
+
+.mind-trace-view .mind-trace-observation-history {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+}
+
+.mind-trace-view .mind-trace-observation-history select {
+  min-width: min(300px, 100%);
+  flex: 1 1 240px;
+}
+
+.mind-trace-view .mind-trace-observation-format-error {
+  flex-basis: 100%;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+}
+
+.mind-trace-view .mind-trace-observation-panorama-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 14px;
+}
+
+.mind-trace-view .mind-trace-observation-dimension-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 132px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-primary);
+  box-shadow: none;
+  color: var(--text-normal);
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+}
+
+.mind-trace-view button.mind-trace-observation-dimension-card {
+  cursor: pointer;
+}
+
+.mind-trace-view button.mind-trace-observation-dimension-card:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-secondary-alt);
+}
+
+.mind-trace-view .mind-trace-observation-dimension-card > .mind-trace-observation-dimension {
+  display: block;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.mind-trace-view .mind-trace-observation-dimension-copy {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.55;
+}
+
+.mind-trace-view .mind-trace-observation-dimension-badges {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.mind-trace-view .mind-trace-observation-dimension-badges span {
+  max-width: 100%;
+  min-width: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.mind-trace-view .mind-trace-observation-dimension-card > .mind-trace-observation-muted {
+  width: 100%;
+  min-width: 0;
+  margin-top: 14px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.mind-trace-view .mind-trace-observation-claim {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: 14px;
+  background: var(--background-primary);
+}
+
+.mind-trace-view .mind-trace-observation-claim.is-hypothesis {
+  border-left-color: var(--color-orange);
+}
+
+.mind-trace-view .mind-trace-observation-evidence-block {
+  margin-top: 14px;
+}
+
+.mind-trace-view .mind-trace-observation-evidence-record {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+  padding: 9px 10px;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.5;
+}
+
+@container (max-width: 860px) {
+  .mind-trace-view .mind-trace-observation-panorama-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 560px) {
+  .mind-trace-view .mind-trace-observation-panorama-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mind-trace-view .mind-trace-observation-dimension-card {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .mind-trace-view .mind-trace-observation-panorama-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mind-trace-view .mind-trace-observation-dimension-card {
+    min-height: auto;
+  }
 }
