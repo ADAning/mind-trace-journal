@@ -1,0 +1,16 @@
+{
+  "name": "mind-trace-journal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs --production",
+    "build:dev": "node scripts/build.mjs",
+    "check:source": "tsc --noEmit",
+    "check": "npm run check:source && npm run build && node --check main.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "obsidian": "1.11.4",
+    "typescript": "7.0.2"
+  }
+}

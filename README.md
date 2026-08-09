@@ -154,8 +154,29 @@ Base URL 都可以修改，以支持不同区域、云厂商专属地址或代�
 - Obsidian 桌面端为当前主要验证环境，移动端支持会持续完善。
 - AI 输出质量、费用和可用性取决于用户选择的模型服务。
 - 当前支持自然周周报与自然月月报；季度和年度周期保留为后续可扩展方向。
-- 当前仓库提供可安装构建产物；TypeScript 源码工程与自动化测试将在后续开源整理中提供。
+- 当前仓库同时提供 `src/` TypeScript 源码与可安装构建产物；`main.js` 由源码生成，请勿直接编辑。
+- 当前尚无自动化行为测试，发布前仍需在 Obsidian 桌面端和移动端敏感流程中手动回归。
 - 升级前建议备份仓库。
+
+## 开发
+
+需要 Node.js 与 npm。安装锁定依赖后，可生成可读调试 bundle 或压缩后的发布 bundle：
+
+```sh
+npm ci
+npm run build:dev
+npm run build
+```
+
+提交前运行：
+
+```sh
+npm run check
+jq empty manifest.json versions.json
+git diff --check
+```
+
+源码按凭据、隐私、指标、模型服务、对话与生成、日记/报告存储、各视图和设置拆分；报告生成与隐私锁状态分别由独立协调器管理。`src/main.ts` 作为 Obsidian 插件入口，负责生命周期、注册、工作区导航和面向视图的流程门面。`check:source` 会执行 TypeScript 语义类型检查，`build` 再从 `src/main.ts` 的显式依赖图生成 CommonJS 发布产物。
 
 ## 反馈
 

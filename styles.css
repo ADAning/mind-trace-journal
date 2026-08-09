@@ -4759,7 +4759,7 @@ button.mind-trace-event-ledger-title:hover {
     margin: 14mm 16mm 16mm;
   }
 
-  html {
+  html.mind-trace-printing {
     height: auto !important;
     overflow: visible !important;
   }
