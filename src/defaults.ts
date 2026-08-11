@@ -190,7 +190,7 @@ function normalizeSelfObservation(value) {
         continue;
       }
       const feedbackItem = item as Record<string, unknown>;
-      if (!["confirmed", "rejected", "pending"].includes(feedbackItem.status as string)) {
+      if (!["confirmed", "partial", "rejected", "uncertain", "pending"].includes(feedbackItem.status as string)) {
         continue;
       }
       const status = feedbackItem.status;

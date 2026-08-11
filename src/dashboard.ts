@@ -125,7 +125,7 @@ function renderLineChart(container, entries, range, onSelectRange = null, previo
     text: "状态趋势",
     attr: { role: "heading", "aria-level": "3" }
   });
-  headingCopy.createEl("p", { text: `${range} 天内实线为自评、虚线为 AI；空白表示当天没有记录` });
+  headingCopy.createEl("p", { text: "实线为自评、虚线为 AI；空白表示当天没有记录" });
   if (onSelectRange !== null) {
     const controls = heading.createDiv({ cls: "mind-trace-range-controls" });
     for (const option of [7, 30, 90]) {
@@ -155,15 +155,13 @@ function renderLineChart(container, entries, range, onSelectRange = null, previo
   }).map((item) => item.date))].sort();
   const trendFoot = section.createDiv({ cls: "mind-trace-trend-foot", attr: { role: "status", "aria-live": "polite" } });
   if (recordedDates.length === 0 && aiDates.length === 0) {
-    trendFoot.createSpan({ cls: "mind-trace-trend-foot-empty", text: `所选 ${range} 天暂无记录` });
+    trendFoot.createSpan({ cls: "mind-trace-trend-foot-empty", text: "所选范围暂无记录" });
   } else {
     const footItem = (label, value, modifier = "") => {
       const item = trendFoot.createSpan({ cls: `mind-trace-trend-foot-item${modifier.length > 0 ? ` ${modifier}` : ""}` });
       item.createSpan({ cls: "mind-trace-trend-foot-label", text: label });
       item.createEl("strong", { text: value });
     };
-    footItem("记录日", `${recordedDates.length} 天`);
-    footItem("AI 覆盖", `${aiDates.length} 天`, aiDates.length === 0 ? "is-empty" : "");
     if (recordedDates.length > 0) {
       const latest = recordedDates[recordedDates.length - 1];
       footItem("最近记录", latest.slice(5).replace("-", "/"));
@@ -249,14 +247,8 @@ function renderTrendMini(container, key, label, entries, range, currentStats, pr
   const aiEntries = Array.isArray(aiSeries) ? aiSeries.filter((item) => item !== null && typeof item === "object" && item.ai !== null && typeof item.ai[key] === "number" && Number.isFinite(item.ai[key])).map((item) => ({ date: item.date, [key]: item.ai[key] })) : [];
   const aiPoints = trendPoints(aiEntries, key, range, left, top, plotWidth, plotHeight);
   const bandPaths = trendBandPaths(selfPoints, aiPoints);
-  const aiCoverageDays = new Set(aiPoints.map((point) => point.date)).size;
-  if (aiCoverageDays > 0) {
-    legend.createSpan({ cls: "mind-trace-trend-legend-coverage", text: `${aiCoverageDays} 天` });
-  } else {
-    legend.createSpan({ cls: "mind-trace-trend-legend-coverage is-empty", text: "暂无" });
-  }
   if (bandPaths.length > 0) {
-    const bandLegend = legend.createSpan({ cls: "mind-trace-trend-legend-item mind-trace-trend-legend-band" });
+    const bandLegend = legend.createSpan({ cls: `mind-trace-trend-legend-item mind-trace-trend-legend-band mind-trace-trend-legend-band-${key}` });
     bandLegend.createSpan({ cls: "mind-trace-trend-legend-line is-band", attr: { "aria-hidden": "true" } });
     bandLegend.appendText("自评–AI 差值");
     svg.setAttribute("aria-label", `${range} 天${label}趋势，评分范围 1 到 5；阴影表示同一日期自评与 AI 的差值`);
@@ -348,12 +340,7 @@ function renderThemes(container, entries, onSelectTheme = null) {
         "aria-label": `${item.theme}，出现 ${item.days} 天`
       }
     });
-    track.createDiv({
-      cls: "mind-trace-theme-bar",
-      attr: {
-        style: `width: ${item.days / max * 100}%`
-      }
-    });
+    track.createDiv({ cls: "mind-trace-theme-bar" }).setCssProps({ width: `${item.days / max * 100}%` });
     row.createSpan({ cls: "mind-trace-theme-count", text: `${item.days} 天` });
   }
 }
@@ -378,6 +365,11 @@ var DashboardComponent = class {
   declare trendRange: any;
   declare trendPreviousEntries: any[];
   declare trendAiSeries: any;
+  declare eventsCard: HTMLElement | null;
+  declare eventsContextButton: HTMLButtonElement | null;
+  declare eventsResizeObserver: ResizeObserver | null;
+  declare eventsRows: HTMLElement[];
+  declare eventsFiller: HTMLElement | null;
   constructor(app, container, range, onRangeChange, onOpenEntry = null, onSelectTheme = null, onOpenEvent = null) {
     this.app = app;
     this.container = container;
@@ -400,6 +392,15 @@ var DashboardComponent = class {
     this.trendRange = this.range;
     this.trendPreviousEntries = [];
     this.trendAiSeries = null;
+    this.eventsCard = null;
+    this.eventsContextButton = null;
+    this.eventsResizeObserver = null;
+    this.eventsRows = [];
+    this.eventsFiller = null;
+  }
+  destroy() {
+    this.eventsResizeObserver?.disconnect();
+    this.eventsResizeObserver = null;
   }
   renderEmpty(container = this.container) {
     container.empty();
@@ -452,7 +453,7 @@ var DashboardComponent = class {
     const dots = streakItem.createDiv({
       cls: "mind-trace-streak-dots",
       attr: {
-        role: "img",
+        role: "group",
         "aria-label": `最近 14 天的记录情况，当前连续 ${streaks.current} 天`
       }
     });
@@ -462,24 +463,13 @@ var DashboardComponent = class {
       const recorded = recordedDates.has(dateString);
       const filePath = recorded ? fileByDate.get(dateString) : void 0;
       const openable = filePath !== void 0 && this.onOpenEntry !== null;
-      const dot = dots.createSpan({
-        cls: `mind-trace-streak-dot${recorded ? " is-recorded" : ""}${openable ? " is-openable" : ""}`,
-        attr: openable ? {
-          title: `${dateString} 有记录`,
-          role: "button",
-          tabindex: "0",
-          "aria-label": `打开 ${dateString} 的日记`
-        } : { title: recorded ? `${dateString} 有记录` : dateString }
-      });
+      const dotClass = `mind-trace-streak-dot${recorded ? " is-recorded" : ""}${openable ? " is-openable" : ""}`;
+      const dot = openable ? dots.createEl("button", {
+        cls: dotClass,
+        attr: { type: "button", title: `${dateString} 有记录`, "aria-label": `打开 ${dateString} 的日记` }
+      }) : dots.createSpan({ cls: dotClass, attr: { title: recorded ? `${dateString} 有记录` : dateString } });
       if (openable) {
-        const open = () => this.onOpenEntry(filePath);
-        dot.addEventListener("click", open);
-        dot.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            open();
-          }
-        });
+        dot.addEventListener("click", () => this.onOpenEntry(filePath));
       }
     }
     addItem("最长连续", `${streaks.longest} 天`);
@@ -565,25 +555,13 @@ var DashboardComponent = class {
         classes.push("is-openable");
       }
       const cellTitle = filePath !== void 0 ? `${dateString} 心情 ${mood.toFixed(1)}` : isToday ? `${dateString} · 开始今天的心迹记录` : dateString;
-      const cell = grid.createSpan({
+      const cell = openable ? grid.createEl("button", {
         cls: classes.join(" "),
         text: String(day),
-        attr: openable ? {
-          role: "button",
-          tabindex: "0",
-          "aria-label": filePath !== void 0 ? `打开 ${dateString} 的日记` : `开始 ${dateString} 的心迹记录`,
-          title: cellTitle
-        } : { title: cellTitle }
-      });
+        attr: { type: "button", "aria-label": filePath !== void 0 ? `打开 ${dateString} 的日记` : `开始 ${dateString} 的心迹记录`, title: cellTitle }
+      }) : grid.createSpan({ cls: classes.join(" "), text: String(day), attr: { title: cellTitle } });
       if (openable) {
-        const open = () => this.onOpenEntry(filePath);
-        cell.addEventListener("click", open);
-        cell.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            open();
-          }
-        });
+        cell.addEventListener("click", () => this.onOpenEntry(filePath));
       }
     }
     const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
@@ -703,18 +681,19 @@ var DashboardComponent = class {
     const heatCellSize = 16;
     const heatLabelWidth = 26;
     const heatGridGap = 3;
-    const grid = wrap.createDiv({
-      cls: "mind-trace-heatmap",
-      attr: {
-        style: `--mind-trace-heat-cell-size: ${heatCellSize}px; --mind-trace-heat-label-width: ${heatLabelWidth}px; grid-template-columns: ${heatLabelWidth}px repeat(${weeks}, ${heatCellSize}px); grid-template-rows: repeat(8, ${heatCellSize}px); min-width: ${heatLabelWidth + weeks * heatCellSize + weeks * heatGridGap}px;`
-      }
+    const grid = wrap.createDiv({ cls: "mind-trace-heatmap" });
+    grid.setCssProps({
+      "--mind-trace-heat-cell-size": `${heatCellSize}px`,
+      "--mind-trace-heat-grid-columns": `${heatLabelWidth}px repeat(${weeks}, ${heatCellSize}px)`,
+      "--mind-trace-heat-grid-rows": `repeat(8, ${heatCellSize}px)`,
+      "--mind-trace-heat-grid-width": `${heatLabelWidth + weeks * heatCellSize + weeks * heatGridGap}px`
     });
     for (const [weekday, row] of [["一", 2], ["三", 4], ["五", 6]]) {
-      grid.createSpan({
+      const label = grid.createSpan({
         cls: "mind-trace-heatmap-weekday",
-        text: String(weekday),
-        attr: { style: `grid-column: 1; grid-row: ${row};` }
+        text: String(weekday)
       });
+      label.setCssProps({ "--mind-trace-heat-grid-column": "1", "--mind-trace-heat-grid-row": String(row) });
     }
     const monthStarts = [];
     let dayCursor = 1;
@@ -726,11 +705,11 @@ var DashboardComponent = class {
     for (let month = 0; month < 12; month += 1) {
       const startWeek = monthStarts[month];
       const span = month < 11 ? monthStarts[month + 1] - startWeek : weeks - startWeek;
-      grid.createSpan({
+      const label = grid.createSpan({
         cls: "mind-trace-heatmap-month",
-        text: `${month + 1}月`,
-        attr: { style: `grid-column: ${startWeek + 2} / span ${span}; grid-row: 1;` }
+        text: `${month + 1}月`
       });
+      label.setCssProps({ "--mind-trace-heat-grid-column": `${startWeek + 2} / span ${span}`, "--mind-trace-heat-grid-row": "1" });
     }
     const todayString = localDateString(new Date());
     dayCursor = 1;
@@ -758,29 +737,17 @@ var DashboardComponent = class {
         const weekday = (firstWeekday + dayCursor - 1) % 7;
         const moodLabel = mood !== void 0 ? `心情 ${mood.toFixed(1)}/5` : "无记录";
         const cellTitle = filePath !== void 0 ? `${dateString} ${moodLabel}` : isToday ? `${dateString} · ${moodLabel} · 开始今天的心迹记录` : `${dateString} · ${moodLabel}`;
-        const cellStyle = `grid-column: ${weekIndex + 2}; grid-row: ${weekday + 2};`;
-        const cell = grid.createSpan({
+        const cell = openable ? grid.createEl("button", {
           cls: classes.join(" "),
-          attr: openable ? {
-            role: "button",
-            tabindex: "0",
+          attr: {
+            type: "button",
             "aria-label": filePath !== void 0 ? `打开 ${dateString} 的日记，${moodLabel}` : `开始 ${dateString} 的心迹记录，${moodLabel}`,
-            title: cellTitle,
-            style: cellStyle
-          } : {
-            title: cellTitle,
-            style: cellStyle
+            title: cellTitle
           }
-        });
+        }) : grid.createSpan({ cls: classes.join(" "), attr: { title: cellTitle } });
+        cell.setCssProps({ "--mind-trace-heat-grid-column": String(weekIndex + 2), "--mind-trace-heat-grid-row": String(weekday + 2) });
         if (openable) {
-          const open = () => this.onOpenEntry(filePath);
-          cell.addEventListener("click", open);
-          cell.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              open();
-            }
-          });
+          cell.addEventListener("click", () => this.onOpenEntry(filePath));
         }
         dayCursor += 1;
       }
@@ -818,6 +785,7 @@ var DashboardComponent = class {
   }
   renderEventsCard(container) {
     const section = container.createDiv({ cls: "mind-trace-chart-section mind-trace-events-card" });
+    this.eventsCard = section;
     const heading = section.createDiv({ cls: "mind-trace-chart-heading" });
     heading.createDiv({
       cls: "mind-trace-chart-title",
@@ -830,6 +798,53 @@ var DashboardComponent = class {
       cls: "mind-trace-empty",
       text: "正在整理最近事件…"
     });
+    const ownerWindow = mindTraceDocument(section).defaultView;
+    if (ownerWindow?.ResizeObserver !== void 0) {
+      this.eventsResizeObserver?.disconnect();
+      this.eventsResizeObserver = new ownerWindow.ResizeObserver(() => this.scheduleEventFit());
+      this.eventsResizeObserver.observe(section);
+    }
+    return section;
+  }
+  setEventsContextButton(button) {
+    this.eventsContextButton = button;
+    this.scheduleEventFit();
+  }
+  scheduleEventFit() {
+    const ownerWindow = this.eventsCard === null ? null : mindTraceDocument(this.eventsCard).defaultView;
+    ownerWindow?.requestAnimationFrame(() => this.fitEventsToAvailableHeight());
+  }
+  fitEventsToAvailableHeight() {
+    const list = this.eventsContainer;
+    if (list === null || !list.isConnected || this.eventsRows.length === 0) {
+      return;
+    }
+    for (const row of this.eventsRows) row.hidden = true;
+    if (this.eventsFiller !== null) this.eventsFiller.hidden = true;
+    const available = Math.max(0, list.clientHeight);
+    let used = 0;
+    let visible = 0;
+    for (const row of this.eventsRows) {
+      row.hidden = false;
+      const height = Math.ceil(row.getBoundingClientRect().height);
+      if (visible > 0 && used + height > available) {
+        row.hidden = true;
+        break;
+      }
+      if (visible === 0 && height > available && available > 0) {
+        row.hidden = false;
+      }
+      used += height;
+      visible += 1;
+    }
+    for (let index = visible; index < this.eventsRows.length; index += 1) this.eventsRows[index].hidden = true;
+    const hiddenCount = Math.max(0, this.eventsRows.length - visible);
+    if (this.eventsContextButton !== null) {
+      this.eventsContextButton.textContent = hiddenCount > 0 ? `查看完整事件脉络 · 另有 ${hiddenCount} 件` : "查看完整事件脉络";
+    }
+    if (hiddenCount === 0 && this.eventsFiller !== null) {
+      this.eventsFiller.hidden = false;
+    }
   }
   renderInsights(insights) {
     if (this.facetsContainer !== null && this.facetsContainer.isConnected) {
@@ -851,12 +866,7 @@ var DashboardComponent = class {
               "aria-label": `${facet.category}，出现 ${facet.count} 次`
             }
           });
-          track.createDiv({
-            cls: "mind-trace-theme-bar",
-            attr: {
-              style: `width: ${facet.count / max * 100}%`
-            }
-          });
+          track.createDiv({ cls: "mind-trace-theme-bar" }).setCssProps({ width: `${facet.count / max * 100}%` });
           row.createSpan({ cls: "mind-trace-theme-count", text: `${facet.count} 次` });
         }
       }
@@ -866,6 +876,8 @@ var DashboardComponent = class {
       const eventCount = Array.isArray(insights.recentEvents) ? insights.recentEvents.length : 0;
       this.eventsContainer.classList.add(eventCount <= 5 ? "is-sparse" : eventCount <= 11 ? "is-balanced" : "is-dense");
       this.eventsContainer.empty();
+      this.eventsRows = [];
+      this.eventsFiller = null;
       if (insights.recentEvents.length === 0) {
         this.eventsContainer.createEl("p", {
           cls: "mind-trace-empty",
@@ -888,7 +900,10 @@ var DashboardComponent = class {
           if (this.onOpenEvent !== null) {
             row.addEventListener("click", () => this.onOpenEvent(event));
           }
+          this.eventsRows.push(row);
         }
+        this.eventsFiller = this.eventsContainer.createDiv({ cls: "mind-trace-events-filler", text: "暂时没有更多事件", attr: { role: "status" } });
+        this.scheduleEventFit();
       }
     }
     if (this.trendContainer !== null && this.trendContainer.isConnected) {

@@ -3,7 +3,7 @@
   "name": "心迹",
   "version": "0.1.0",
   "minAppVersion": "1.11.5",
-  "description": "用两三分钟的引导对话生成日记、反思建议与个人成长趋势。",
+  "description": "用两三分钟的引导对话生成日记、反思建议与个人成长趋势.",
   "author": "daning",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }

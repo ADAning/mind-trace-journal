@@ -92,8 +92,8 @@ function autoGrow(textarea) {
     }
   };
   const resize = (followCaret) => {
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
+    textarea.setCssProps({ height: "auto" });
+    textarea.setCssProps({ height: `${textarea.scrollHeight}px` });
     if (followCaret) {
       ownerWindow.requestAnimationFrame(keepCaretVisible);
     }
@@ -258,6 +258,7 @@ var JournalView = class extends import_obsidian4.ItemView {
   observationError = "";
   observationLoadToken = 0;
   observationDashboardCardEl = null;
+  recordContextObserver = null;
   getViewType() {
     return JOURNAL_VIEW_TYPE;
   }
@@ -301,6 +302,10 @@ var JournalView = class extends import_obsidian4.ItemView {
     return Promise.resolve();
   }
   onClose() {
+    this.homeDashboard?.destroy?.();
+    this.homeDashboard = null;
+    this.recordContextObserver?.disconnect();
+    this.recordContextObserver = null;
     this.unsubscribeDraft?.();
     this.unsubscribeDraft = null;
     this.unsubscribeMetrics?.();
@@ -336,10 +341,13 @@ var JournalView = class extends import_obsidian4.ItemView {
     }
   }
   render(preserveContext = false) {
-    const existing = this.containerEl.children[1];
-    const context = preserveContext && existing instanceof this.ownerWindow.HTMLElement ? captureMindTraceContext(existing) : null;
+    const context = preserveContext ? captureMindTraceContext(this.contentEl) : null;
+    this.homeDashboard?.destroy?.();
+    this.homeDashboard = null;
+    this.recordContextObserver?.disconnect();
+    this.recordContextObserver = null;
     this.renderToken += 1;
-    const container = this.containerEl.children[1];
+    const container = this.contentEl;
     container.empty();
     container.addClass("mind-trace-view");
     if (renderPrivacyGate(container, this.plugin)) {
@@ -429,8 +437,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       button.addEventListener("click", () => {
         this.setMode(mode.id);
         this.ownerWindow.requestAnimationFrame(() => {
-          const target = this.containerEl.children[1]?.querySelector(`[data-mind-trace-focus-key="mind-trace-mode-${mode.id}"]`);
-          if (target instanceof this.ownerWindow.HTMLElement) {
+          const target = this.contentEl.querySelector(`[data-mind-trace-focus-key="mind-trace-mode-${mode.id}"]`);
+          if (target !== null && target.instanceOf(this.ownerWindow.HTMLElement)) {
             target.focus();
           }
         });
@@ -444,8 +452,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         const next = MIND_TRACE_MODES[nextIndex];
         this.setMode(next.id);
         this.ownerWindow.requestAnimationFrame(() => {
-          const target = this.containerEl.children[1]?.querySelector(`[data-mind-trace-focus-key="mind-trace-mode-${next.id}"]`);
-          if (target instanceof this.ownerWindow.HTMLElement) {
+          const target = this.contentEl.querySelector(`[data-mind-trace-focus-key="mind-trace-mode-${next.id}"]`);
+          if (target !== null && target.instanceOf(this.ownerWindow.HTMLElement)) {
             target.focus();
           }
         });
@@ -522,7 +530,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           }
         }
         return { localFacets, localEvents, localAi, sessions };
-      } catch (error) {
+      } catch {
         return null;
       }
     });
@@ -598,13 +606,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     this.weeklyReportLoading = true;
     this.weeklyReportState = { kind: "loading", key, period };
     try {
-      let status = await this.plugin.weeklyReportStatus(period);
+      const status = await this.plugin.weeklyReportStatus(period);
       if (status.kind === "missing" && this.plugin.settings.weeklyReportAutoGenerate !== false) {
-        if (!this.plugin.weeklyReportAttempts.has(key)) {
-          this.weeklyReportLoading = false;
-          this.retryWeeklyReport(false, true);
-          return;
-        }
+        this.weeklyReportLoading = false;
+        this.retryWeeklyReport(false, true);
+        return;
       }
       this.weeklyReportState = { ...status, key };
     } catch (error) {
@@ -929,8 +935,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     dashboard.renderTrend(trendCell, filtered, this.plugin.settings.dashboardRange, previousFiltered);
     const secondary = shell.createDiv({ cls: "mind-trace-home-secondary" });
     const eventsCell = secondary.createDiv({ cls: "mind-trace-home-workspace-events" });
-    dashboard.renderEventsCard(eventsCell);
-    const eventsLink = eventsCell.createEl("button", {
+    const eventsCard = dashboard.renderEventsCard(eventsCell);
+    const eventsFooter = eventsCard.createDiv({ cls: "mind-trace-events-footer" });
+    const eventsLink = eventsFooter.createEl("button", {
       cls: "mind-trace-home-support-link",
       text: "查看完整事件脉络",
       attr: { type: "button" }
@@ -939,6 +946,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       this.trajectoryView = "events";
       this.setMode("trajectory");
     });
+    dashboard.setEventsContextButton(eventsLink);
     const reviewCell = secondary.createDiv({ cls: "mind-trace-home-support-review" });
     this.renderWeeklyReportCard(reviewCell);
     const observationCell = secondary.createDiv({ cls: "mind-trace-home-support-observation" });
@@ -1009,7 +1017,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       cells: weekProgress.minimum,
       overflow: weekProgress.overflow
     });
-    const monthSegments = monthlyWeekSegments(entries, currentMonthPeriod(), settings.weeklyReportMinimumDays);
+    const generatedWeeks = collectWeeklyReportFiles(this.app).filter((item) => item.status === "complete").map((item) => ({ start: item.start, end: item.end }));
+    const monthSegments = monthlyWeekSegments(entries, currentMonthPeriod(), settings.weeklyReportMinimumDays, generatedWeeks);
     const reachedCount = monthSegments.filter((segment) => segment.reached).length;
     this.renderMonthlyFormationBlock(strip, {
       kicker: "本月正在形成",
@@ -1031,39 +1040,41 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const total = head.createDiv({ cls: "mind-trace-formation-total" });
     total.createSpan({ cls: "mind-trace-formation-count", text: countText });
     total.createSpan({ cls: "mind-trace-formation-percent", text: `${Math.round(percent)}%` });
-    const shown = overflow > 0 ? days : (minimum > 0 ? minimum : 1);
-    const fillWidth = minimum > 0 && overflow > 0 ? (minimum / days) * 100 : Math.min(100, percent);
-    const spillWidth = overflow > 0 ? (overflow / days) * 100 : 0;
+    const shown = Math.max(1, cells, days);
+    const labels = block.createDiv({ cls: "mind-trace-formation-seg-labels mind-trace-formation-day-labels" });
+    for (let index = 0; index < shown; index += 1) {
+      const recorded = index < days;
+      const spilled = recorded && index >= minimum;
+      const dayLabel = labels.createSpan({ cls: `mind-trace-formation-seg-label${recorded ? " is-reached" : ""}${spilled ? " is-overflow" : ""}` });
+      dayLabel.createSpan({ cls: "mind-trace-formation-seg-primary", text: `第${index + 1}天` });
+      dayLabel.createSpan({ cls: `mind-trace-formation-seg-secondary${spilled ? " is-overflow" : ""}`, text: spilled ? "溢出" : recorded ? "已记录" : "待记录" });
+    }
     const bar = block.createDiv({ cls: "mind-trace-formation-bar" });
     const track = bar.createDiv({
-      cls: "mind-trace-formation-track",
+      cls: "mind-trace-formation-day-segments",
       attr: {
         role: "progressbar",
         "aria-label": `${label}形成进度`,
         "aria-valuemin": "0",
-        "aria-valuemax": "100",
-        "aria-valuenow": String(Math.min(100, Math.round(percent))),
+        "aria-valuemax": String(minimum),
+        "aria-valuenow": String(Math.min(minimum, days)),
         "aria-valuetext": countText
       }
     });
-    track.createDiv({ cls: "mind-trace-formation-fill", attr: { style: `width: ${fillWidth}%` } });
-    for (let index = 1; index < shown; index += 1) {
-      track.createDiv({ cls: "mind-trace-formation-pip", attr: { style: `left: ${(index / shown) * 100}%`, "aria-hidden": "true" } });
-    }
-    if (cells > 0) {
-      const thresholdStyle = overflow > 0 ? `left: ${fillWidth}%; transform: translateX(-50%);` : "";
-      track.createDiv({ cls: "mind-trace-formation-threshold", attr: { title: "最低生成门槛", "aria-hidden": "true", style: thresholdStyle } });
+    track.setCssProps({ "--mind-trace-formation-day-count": String(shown) });
+    for (let index = 0; index < shown; index += 1) {
+      const recorded = index < days;
+      const spilled = recorded && index >= minimum;
+      track.createDiv({
+        cls: `mind-trace-formation-day-segment${recorded ? " is-filled" : ""}${spilled ? " is-overflow" : ""}`,
+        attr: {
+          "aria-hidden": "true",
+          title: spilled ? `第 ${index + 1} 个记录日 · 溢出门槛` : recorded ? `第 ${index + 1} 个记录日 · 已记录` : `第 ${index + 1} 个记录日 · 待记录`
+        }
+      });
     }
     if (overflow > 0) {
       block.addClass("is-overflow");
-      track.createDiv({
-        cls: "mind-trace-formation-spill",
-        attr: {
-          style: `left: ${fillWidth}%; width: ${spillWidth}%`,
-          "aria-hidden": "true",
-          title: `超过${label}最低门槛 ${overflow} 天`
-        }
-      });
     }
     const caption = block.createDiv({ cls: "mind-trace-formation-caption", text: formationCaption(label, { days, minimum, overflow }) });
     if (overflow > 0) {
@@ -1092,12 +1103,20 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const labels = block.createDiv({ cls: "mind-trace-formation-seg-labels" });
     for (const segment of segments) {
       const label = labels.createSpan({ cls: "mind-trace-formation-seg-label" });
-      if (segment.reached) {
+      if (segment.future) {
+        label.addClass("is-future");
+        label.createSpan({ cls: "mind-trace-formation-seg-primary", text: "未开始" });
+        label.setAttribute("title", `${segment.start.slice(5).replace("-", "/")}—${segment.end.slice(5).replace("-", "/")} · 尚未开始`);
+      } else if (segment.reached) {
         label.addClass("is-reached");
-        label.textContent = "达成";
-        label.setAttribute("title", `已达成 ${Math.round(segment.percent)}%`);
+        label.createSpan({ cls: "mind-trace-formation-seg-primary", text: "达成" });
+        label.createSpan({ cls: "mind-trace-formation-seg-secondary", text: `${segment.days}/${segment.minimum}${segment.overflow > 0 ? ` · 溢出${segment.overflow}天` : ""}` });
+        label.setAttribute("title", `周报已生成 · ${segment.days}/${segment.minimum} 天${segment.overflow > 0 ? ` · 溢出 ${segment.overflow} 天` : ""}`);
       } else {
-        label.textContent = `${Math.round(segment.percent)}%`;
+        label.createSpan({ cls: "mind-trace-formation-seg-primary", text: `${segment.days}/${segment.minimum}` });
+        if (segment.overflow > 0) label.createSpan({ cls: "mind-trace-formation-seg-secondary is-overflow", text: `溢出 ${segment.overflow} 天` });
+        label.createSpan({ cls: "mind-trace-formation-seg-secondary", text: "未达成" });
+        label.setAttribute("title", segment.eligible ? `已满足记录门槛，但周报尚未生成${segment.overflow > 0 ? ` · 溢出 ${segment.overflow} 天` : ""}` : `周报尚未生成 · 当前 ${segment.days}/${segment.minimum} 天`);
       }
     }
     const bar = block.createDiv({ cls: "mind-trace-formation-bar" });
@@ -1113,26 +1132,27 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       }
     });
     for (const segment of segments) {
-      const cell = track.createDiv({ cls: `mind-trace-formation-segment${segment.reached ? " is-reached" : ""}${segment.overflow > 0 ? " is-overflow" : ""}` });
+      const cell = track.createDiv({ cls: `mind-trace-formation-segment${segment.reached ? " is-reached" : ""}${segment.overflow > 0 ? " is-overflow" : ""}${segment.future ? " is-future" : ""}` });
       const fillWidth = segment.overflow > 0 ? (segment.minimum / segment.days) * 100 : Math.min(100, segment.percent);
       const spillWidth = segment.overflow > 0 ? (segment.overflow / segment.days) * 100 : 0;
-      cell.createDiv({ cls: "mind-trace-formation-seg-fill", attr: { style: `width: ${fillWidth}%`, "aria-hidden": "true" } });
+      cell.createDiv({ cls: "mind-trace-formation-seg-fill", attr: { "aria-hidden": "true" } }).setCssProps({ width: `${fillWidth}%` });
       if (segment.overflow > 0) {
-        cell.createDiv({ cls: "mind-trace-formation-seg-spill", attr: { style: `left: ${fillWidth}%; width: ${spillWidth}%`, "aria-hidden": "true", title: `超过最低门槛 ${segment.overflow} 天` } });
+        cell.createDiv({ cls: "mind-trace-formation-seg-spill", attr: { "aria-hidden": "true", title: `超过最低门槛 ${segment.overflow} 天` } }).setCssProps({ left: `${fillWidth}%`, width: `${spillWidth}%` });
       }
-      const overflowText = segment.overflow > 0 ? ` · 超过门槛 ${segment.overflow} 天` : "";
-      cell.setAttribute("title", `${segment.start.slice(5).replace("-", "/")}—${segment.end.slice(5).replace("-", "/")} · ${segment.days}/${segment.minimum} 天${overflowText}`);
-      cell.setAttribute("aria-label", `${segment.start.slice(5).replace("-", "/")}到${segment.end.slice(5).replace("-", "/")}，${segment.days}/${segment.minimum} 天${segment.overflow > 0 ? `，超过门槛 ${segment.overflow} 天` : ""}`);
+      const overflowText = segment.overflow > 0 ? ` · 溢出 ${segment.overflow} 天` : "";
+      const statusText = segment.future ? "未开始" : segment.reached ? "周报已生成，已达成" : segment.eligible ? "已满足记录门槛，周报尚未生成，未达成" : "周报尚未生成，未达成";
+      cell.setAttribute("title", `${segment.start.slice(5).replace("-", "/")}—${segment.end.slice(5).replace("-", "/")} · ${segment.days}/${segment.minimum} 天${overflowText} · ${statusText}`);
+      cell.setAttribute("aria-label", `${segment.start.slice(5).replace("-", "/")}到${segment.end.slice(5).replace("-", "/")}，${segment.days}/${segment.minimum} 天${segment.overflow > 0 ? `，溢出 ${segment.overflow} 天` : ""}，${statusText}`);
     }
     let captionText;
     if (totalDays === 0) {
       captionText = "写下今天的落点，进度就会点亮。";
     } else if (reachedCount === total) {
-      captionText = hasOverflow ? `本月 ${total} 段全部达成，其中 ${overflowSegments.length} 段超过门槛 ${overflowDays} 天。` : `本月 ${total} 段全部达成，可以准备月报。`;
+      captionText = hasOverflow ? `本月 ${total} 个自然周的周报均已生成，其中 ${overflowSegments.length} 周共溢出 ${overflowDays} 天。` : `本月 ${total} 个自然周的周报均已生成，可以准备月报。`;
     } else if (reachedCount > 0) {
-      captionText = hasOverflow ? `已达成 ${reachedCount}/${total} 段，其中 ${overflowSegments.length} 段超过门槛 ${overflowDays} 天。` : `已达成 ${reachedCount}/${total} 段，继续点亮更多周。`;
+      captionText = hasOverflow ? `已生成 ${reachedCount}/${total} 份周报；${overflowSegments.length} 周共溢出 ${overflowDays} 天，未生成周报的周仍不算达成。` : `已生成 ${reachedCount}/${total} 份周报；达到记录门槛后仍需生成周报才算达成。`;
     } else {
-      captionText = "本月还没有达成任何周，继续记录即可点亮。";
+      captionText = "本月还没有生成周报；记录进度会继续保留，但生成周报后才算达成。";
     }
     const caption = block.createDiv({ cls: `mind-trace-formation-caption${hasOverflow ? " is-overflow" : ""}`, text: captionText });
     if (hasOverflow) {
@@ -1172,8 +1192,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       return;
     }
     if (state.kind === "ready" || state.kind === "stale") {
+      const preview = state.preview === true;
       if (state.kind === "stale") {
-        header.createSpan({ cls: "mind-trace-report-badge", text: "日记有更新" });
+        header.createSpan({ cls: "mind-trace-report-badge", text: preview ? "预览待更新" : "日记有更新" });
       }
       const summary = typeof state.summary === "string" ? state.summary : "";
       if (summary.length < 90) {
@@ -1186,8 +1207,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       const facts = body.createDiv({ cls: "mind-trace-home-support-facts" });
       facts.createSpan({ text: `记录日 ${Number(stats.days) || 0} 天` });
       facts.createSpan({ text: `${Number(stats.sessions) || 0} 篇日记` });
-      facts.createSpan({ text: state.kind === "stale" ? "待更新" : "已同步" });
-      action("打开完整周报", () => void this.openWeeklyReportFile(state.file.path), true);
+      facts.createSpan({ text: preview ? "周期已结束" : state.kind === "stale" ? "待更新" : "已同步" });
+      action(preview ? "打开周报预览" : "打开完整周报", () => void this.openWeeklyReportFile(state.file.path), true);
       if (state.kind === "stale") {
         action("更新周报", () => {
           this.retryWeeklyReport(true);
@@ -1261,7 +1282,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     }
     if (state.kind === "insufficient") {
       body.createDiv({ cls: "mind-trace-report-status-title", text: "这个月的线索还不够" });
-      body.createEl("p", { text: `已有 ${state.source.stats.activeWeeks} 个活跃自然周，达到 ${state.minimum} 周后才会调用模型。` });
+      body.createEl("p", { text: `该月已有 ${state.source.stats.activeWeeks} 份完整周报，达到 ${state.minimum} 份后才会调用模型生成正式月报。` });
       return;
     }
     if (state.kind === "unconfigured") {
@@ -1784,15 +1805,14 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     }
   }
   renderHomeRow(rows, entry) {
-    const row = rows.createDiv({
+    const row = rows.createEl("button", {
       cls: "mind-trace-home-row",
       attr: {
-        role: "button",
-        tabindex: "0",
+        type: "button",
         "aria-label": `打开 ${entry.date} 的日记`
       }
     });
-    const rail = row.createDiv({
+    const rail = row.createSpan({
       cls: "mind-trace-home-rail",
       attr: { "aria-hidden": "true" }
     });
@@ -1800,7 +1820,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     rail.createSpan({
       cls: `mind-trace-home-dot mind-trace-heat-${heatLevel}`
     });
-    const main = row.createDiv({ cls: "mind-trace-home-row-main" });
+    const main = row.createSpan({ cls: "mind-trace-home-row-main" });
     const date = main.createSpan({ cls: "mind-trace-home-date" });
     date.createSpan({ cls: "mind-trace-home-date-day", text: entry.date.slice(5) });
     date.createSpan({ cls: "mind-trace-home-date-week", text: weekdayText(entry.date) });
@@ -1837,12 +1857,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       void this.openJournalFile(entry.filePath);
     };
     row.addEventListener("click", open);
-    row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        open();
-      }
-    });
   }
   async collectObservationReports() {
     const weekly = collectWeeklyReportFiles(this.app).map((item) => ({ ...item, type: "weekly" }));
@@ -1870,14 +1884,24 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     if (candidates.length > 0 && reports.length === 0) {
       throw new Error(`找到 ${candidates.length} 份候选报告，但全部无法解析；请先修复报告格式后重试。`);
     }
-    const deduped = dedupeObservationReports(reports);
-    const counts = { weekly: 0, monthly: 0 };
-    return deduped.filter((item) => {
-      const limit = item.type === "monthly" ? 3 : 8;
-      if (counts[item.type] >= limit) return false;
-      counts[item.type] += 1;
-      return true;
-    });
+    const deduped = dedupeObservationReports(reports).filter((item) => item.periodStatus !== "partial");
+    const newestFirst = (left, right) => right.periodEnd.localeCompare(left.periodEnd) || right.periodStart.localeCompare(left.periodStart);
+    const monthlyReports = deduped.filter((item) => item.type === "monthly").sort(newestFirst);
+    if (monthlyReports.length >= 2) {
+      const newerStart = parseLocalDate(monthlyReports[0].periodStart);
+      const olderStart = parseLocalDate(monthlyReports[1].periodStart);
+      if (newerStart !== null && olderStart !== null) {
+        const expectedOlder = new Date(newerStart.getFullYear(), newerStart.getMonth() - 1, 1);
+        if (localDateString(expectedOlder) === localDateString(olderStart)) {
+          return monthlyReports.slice(0, 2).reverse();
+        }
+      }
+    }
+    const weeklyReports = deduped.filter((item) => item.type === "weekly").sort(newestFirst);
+    if (weeklyReports.length > 0) {
+      return weeklyReports.slice(0, 2).reverse();
+    }
+    return monthlyReports.slice(0, 1);
   }
   async loadObservationReports() {
     if (this.observationLoading || this.observationReports !== null) {
@@ -1908,7 +1932,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const status = container.createDiv({ cls: "mind-trace-observation-state", attr: { role: kind === "error" ? "alert" : "status", "aria-live": "polite" } });
     const mark = kind === "loading" ? "读取" : kind === "error" ? "重试" : kind === "unconfigured" ? "连接" : "等待";
     const title = kind === "loading" ? "正在读取可解析的回顾" : kind === "error" ? "观照来源暂时无法读取" : kind === "unconfigured" ? "先选择一个模型服务" : kind === "missing" ? "还没有可用的回顾" : "还没有这次观照";
-    const body = kind === "loading" ? "将整理最近 8 份周报与 3 份月报中的报告字段、结构化事件摘要和短证据片段，不读取完整历史日记。" : kind === "error" ? this.observationError || "读取回顾时遇到问题。" : kind === "unconfigured" ? "配置模型名称和 API Key 后，才能生成新的观照；已有观照仍可继续查看。" : kind === "missing" ? "至少需要 1 份能成功解析且包含结构化事件的周报或月报。先生成一份回顾，再回来观照。" : "从最近的周报与月报开始，整理一张可验证的变化描线。";
+    const body = kind === "loading" ? "将优先选择最近两份连续完整月报；月报不足时选择最近两份完整周报。只读取报告字段、结构化事件摘要和短证据片段，不读取完整历史日记。" : kind === "error" ? this.observationError || "读取回顾时遇到问题。" : kind === "unconfigured" ? "配置模型名称和 API Key 后，才能生成新的观照；已有观照仍可继续查看。" : kind === "missing" ? "至少需要 1 份能成功解析且包含结构化事件的完整周报或月报。先生成一份回顾，再回来观照。" : "从最近的可比完整周期开始，整理一张可验证的变化描线。";
     status.createDiv({ cls: "mind-trace-observation-state-mark", text: mark, attr: { "aria-hidden": "true" } });
     status.createDiv({ cls: "mind-trace-observation-state-title", text: title, attr: { role: "heading", "aria-level": "2" } });
     status.createEl("p", { text: body });
@@ -1954,7 +1978,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     return feedback === void 0 ? { status: "pending", correction: "" } : { status: feedback.status, correction: feedback.correction ?? "" };
   }
   observationFeedbackLabel(status) {
-    return status === "confirmed" ? "你已确认" : status === "rejected" ? "你已否认" : "待你验证";
+    return status === "confirmed" ? "符合" : status === "partial" ? "部分符合" : status === "rejected" ? "不符合" : status === "uncertain" ? "暂时不确定" : "待你验证";
   }
   openObservationFeedback(type, item) {
     const key = item.key || observationItemKey(type, item);
@@ -1974,7 +1998,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     if (feedbackHost instanceof this.ownerWindow.HTMLElement) {
       feedbackHost.classList.add("has-observation-feedback", `is-feedback-${feedback.status}`);
     }
-    const status = container.createSpan({ cls: `mind-trace-observation-feedback-status is-${feedback.status}`, text: this.observationFeedbackLabel(feedback.status) });
+    container.createSpan({ cls: `mind-trace-observation-feedback-status is-${feedback.status}`, text: this.observationFeedbackLabel(feedback.status) });
     if (feedback.correction.length > 0 && feedbackHost instanceof this.ownerWindow.HTMLElement) {
       feedbackHost.createDiv({ cls: "mind-trace-observation-correction", text: `你的修正：${feedback.correction}` });
     }
@@ -2017,9 +2041,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   }
   renderObservationGrowthTrace(shell, maturity) {
     const growth = shell.createEl("section", { cls: "mind-trace-observation-growth", attr: { "aria-labelledby": "mind-trace-observation-growth-title" } });
-    growth.createDiv({ cls: "mind-trace-observation-section-title", text: "观照成长描线", attr: { id: "mind-trace-observation-growth-title", role: "heading", "aria-level": "2" } });
-    growth.createEl("p", { cls: "mind-trace-observation-section-note", text: `客观累计：${maturity.eligibleReportCount} 份可解析回顾 · ${maturity.independentPeriodCount} 个互不重叠的完整周期 · ${maturity.allUniqueEvidenceDateCount} 个证据日期（高阶段计 ${maturity.uniqueEvidenceDateCount} 个）· 证据跨度 ${maturity.evidenceSpanDays} 天。` });
-    const list = growth.createDiv({ cls: "mind-trace-observation-growth-list" });
+    const heading = growth.createDiv({ cls: "mind-trace-observation-growth-heading" });
+    heading.createDiv({ cls: "mind-trace-observation-section-title", text: "观照阶段", attr: { id: "mind-trace-observation-growth-title", role: "heading", "aria-level": "2" } });
+    heading.createSpan({ cls: "mind-trace-observation-growth-summary", text: `${maturity.independentPeriodCount} 个独立周期 · 跨度 ${maturity.evidenceSpanDays} 天` });
     const stages = [
       { id: "initial", label: "初次观照", title: "摘要、初现线索与三种基础视角", copy: "摘要、初现线索、事实 / 情绪 / 行为视角、证据日期、自我问题和下一小步。" },
       { id: "cross_period", label: "跨周期观照", title: "跨周期变化与待验证假设", copy: "在互不重叠的完整周期之间描出变化，加入替代解释与可继续追问的问题。" },
@@ -2027,6 +2051,18 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     ];
     const rank = { initial: 0, cross_period: 1, continuous: 2 };
     const currentRank = rank[maturity.stage] ?? 0;
+    const track = growth.createDiv({ cls: "mind-trace-observation-growth-track", attr: { role: "list", "aria-label": "观照阶段进度" } });
+    for (const stage of stages) {
+      const stageRank = rank[stage.id];
+      const stateClass = stageRank === currentRank ? "is-current" : stageRank < currentRank ? "is-complete" : "is-next";
+      const step = track.createDiv({ cls: `mind-trace-observation-growth-step ${stateClass}`, attr: { role: "listitem" } });
+      step.createSpan({ cls: "mind-trace-observation-growth-step-dot", attr: { "aria-hidden": "true" } });
+      step.createSpan({ text: stage.label });
+    }
+    const detail = growth.createEl("details", { cls: "mind-trace-observation-growth-detail" });
+    detail.createEl("summary", { text: "查看阶段条件与证据统计" });
+    detail.createEl("p", { cls: "mind-trace-observation-section-note", text: `客观累计：${maturity.eligibleReportCount} 份可解析回顾 · ${maturity.independentPeriodCount} 个互不重叠的完整周期 · ${maturity.allUniqueEvidenceDateCount} 个证据日期（高阶段计 ${maturity.uniqueEvidenceDateCount} 个）· 证据跨度 ${maturity.evidenceSpanDays} 天。` });
+    const list = detail.createDiv({ cls: "mind-trace-observation-growth-list" });
     for (const stage of stages) {
       const stageRank = rank[stage.id];
       const hasInitialEvidence = Number(maturity.eligibleReportCount) > 0;
@@ -2086,8 +2122,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const shell = container.createDiv({ cls: "mind-trace-page-shell mind-trace-observation-page" });
     const heading = shell.createDiv({ cls: "mind-trace-page-heading" });
     heading.createDiv({ cls: "mind-trace-eyebrow", text: "观照 · 不是定论" });
-    heading.createDiv({ cls: "mind-trace-page-title", text: "最近的我，出现了哪些值得我自己验证的变化？", attr: { role: "heading", "aria-level": "1" } });
-    heading.createEl("p", { text: "把近期回顾里的线索描出来，保留复杂性，也把最后的判断交还给你。" });
+    heading.createDiv({ cls: "mind-trace-page-title", text: "你最近都发生了哪些变化？", attr: { role: "heading", "aria-level": "1" } });
+    heading.createEl("p", { text: "先看变化，再核对依据；最后是否符合，仍由你自己判断。" });
     if (this.observationLoading) {
       this.renderObservationStatus(shell, "loading");
       return;
@@ -2270,7 +2306,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const starts = sources.map((source) => source.periodStart).filter(Boolean).sort();
     const ends = sources.map((source) => source.periodEnd).filter(Boolean).sort();
     meta.createSpan({ text: starts.length && ends.length ? `${starts[0]} — ${ends[ends.length - 1]}` : "来源周期未记录" });
-    meta.createSpan({ text: `${sources.length} 份来源报告` });
+    const availableSourceCount = Array.isArray(reports) ? reports.length : 0;
+    meta.createSpan({ text: availableSourceCount > sources.length ? `生成时使用 ${sources.length} 份 · 当前可用 ${availableSourceCount} 份` : `${sources.length} 份来源报告` });
     meta.createSpan({ text: this.observationGeneratedText(snapshot.generatedAt) });
     hero.createDiv({ cls: "mind-trace-observation-summary", text: analysis.summary, attr: { role: "heading", "aria-level": "2" } });
     this.renderObservationFreshness(hero, snapshot, reports);
@@ -2292,58 +2329,80 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         successTitle: "观照已移到废纸篓", successDetail: "其他观照版本和来源仍然保留。", backgroundSuccess: "观照已删除"
       });
     });
-    const panorama = shell.createEl("section", { cls: "mind-trace-observation-panorama" });
-    panorama.createDiv({ cls: "mind-trace-observation-section-title", text: "六维变化全景", attr: { role: "heading", "aria-level": "2" } });
-    panorama.createEl("p", { cls: "mind-trace-observation-section-note", text: "依据充分度由本地代码按支持日期、独立周期、跨度与反例计算，不是真相概率。" });
+    this.renderObservationGrowthTrace(shell, maturity);
+    const panorama = shell.createEl("nav", { cls: "mind-trace-observation-panorama", attr: { "aria-label": "六维变化索引" } });
+    panorama.createDiv({ cls: "mind-trace-observation-section-title", text: "变化索引", attr: { role: "heading", "aria-level": "2" } });
     const grid = panorama.createDiv({ cls: "mind-trace-observation-panorama-grid" });
     for (const dimension of OBSERVATION_DIMENSIONS) {
       const claim = analysis.claims.find((item) => item.dimension === dimension);
-      const card = grid.createEl(claim ? "button" : "article", { cls: `mind-trace-observation-dimension-card${claim ? " has-evidence" : " is-empty"}`, attr: claim ? { type: "button" } : {} });
+      const card = grid.createEl(claim ? "button" : "span", { cls: `mind-trace-observation-dimension-card${claim ? " has-evidence" : " is-empty"}`, attr: claim ? { type: "button", "aria-label": `查看${dimension}变化` } : {} });
       card.createSpan({ cls: "mind-trace-observation-dimension", text: dimension });
       if (!claim) {
-        card.createDiv({ cls: "mind-trace-observation-muted", text: "暂无足够依据" });
+        card.createSpan({ cls: "mind-trace-observation-muted", text: "暂无依据" });
         continue;
       }
       const metrics = observationClaimMetrics(claim, snapshot.evidence ?? [], sources);
-      card.createDiv({ cls: "mind-trace-observation-dimension-copy", text: claim.statement });
-      const badges = card.createDiv({ cls: "mind-trace-observation-dimension-badges" });
-      badges.createSpan({ text: metrics.signal });
-      badges.createSpan({ text: `依据${metrics.sufficiency}` });
+      card.createSpan({ cls: "mind-trace-observation-dimension-signal", text: metrics.signal });
       card.addEventListener("click", () => shell.querySelector(`[data-observation-claim="${claim.key}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }
-    const details = shell.createEl("section", { cls: "mind-trace-observation-section" });
-    details.createDiv({ cls: "mind-trace-observation-section-title", text: "观察详情", attr: { role: "heading", "aria-level": "2" } });
-    for (const claim of analysis.claims) {
+    const details = shell.createEl("section", { cls: "mind-trace-observation-section mind-trace-observation-changes" });
+    const detailsHeading = details.createDiv({ cls: "mind-trace-observation-changes-heading" });
+    detailsHeading.createDiv({ cls: "mind-trace-observation-section-title", text: "最近的变化", attr: { role: "heading", "aria-level": "2" } });
+    detailsHeading.createEl("p", { cls: "mind-trace-observation-section-note", text: "判断依据不是定论；支持记录、反例和你的校准共同决定这条观察是否站得住。" });
+    const openEvidence = (item) => {
+      const journal = collectMetrics(this.app).entries.find((entry) => entry.date === item.date);
+      if (journal !== void 0) {
+        void this.plugin.openJournalDate(item.date);
+        return;
+      }
+      const sourcePath = item.sourceReports?.find((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFile);
+      if (sourcePath) void this.openWeeklyReportFile(sourcePath);
+    };
+    for (const [claimIndex, claim] of analysis.claims.entries()) {
       const metrics = observationClaimMetrics(claim, snapshot.evidence ?? [], sources);
       const card = details.createEl("article", { cls: `mind-trace-observation-claim is-${claim.layer}`, attr: { "data-observation-claim": claim.key } });
       const top = card.createDiv({ cls: "mind-trace-observation-item-top" });
-      top.createSpan({ cls: "mind-trace-observation-dimension", text: claim.dimension });
+      const identity = top.createDiv({ cls: "mind-trace-observation-claim-identity" });
+      identity.createSpan({ cls: "mind-trace-observation-claim-index", text: String(claimIndex + 1).padStart(2, "0") });
+      identity.createSpan({ cls: "mind-trace-observation-dimension", text: claim.dimension });
       top.createSpan({ cls: "mind-trace-observation-signal", text: `${metrics.signal} · 依据${metrics.sufficiency}` });
       card.createDiv({ cls: "mind-trace-observation-item-copy", text: claim.statement });
       if (claim.before || claim.now) card.createDiv({ cls: "mind-trace-observation-change-copy", text: `${claim.before || "暂无明确对照"} → ${claim.now || "暂无明确对照"}` });
-      card.createDiv({ cls: "mind-trace-observation-basis", text: `支持 ${metrics.support.length} · 反例 ${metrics.counter.length} · 独立周期 ${metrics.independentPeriods} · 跨度 ${metrics.spanDays} 天` });
-      const renderEvidence = (title, items, empty) => {
-        const block = card.createDiv({ cls: "mind-trace-observation-evidence-block" });
+      const basis = card.createDiv({ cls: "mind-trace-observation-basis" });
+      basis.createSpan({ text: `支持 ${metrics.support.length}` });
+      basis.createSpan({ text: `反例 ${metrics.counter.length}` });
+      basis.createSpan({ text: `${metrics.independentPeriods} 个独立周期` });
+      basis.createSpan({ text: `跨度 ${metrics.spanDays} 天` });
+      const renderEvidence = (host, title, items, empty, limit) => {
+        const block = host.createDiv({ cls: "mind-trace-observation-evidence-block" });
         block.createDiv({ cls: "mind-trace-observation-evidence-label", text: title });
         if (items.length === 0) block.createDiv({ cls: "mind-trace-observation-muted", text: empty });
-        for (const item of items) {
+        for (const item of items.slice(0, limit)) {
           const button = block.createEl("button", { cls: "mind-trace-observation-evidence-record", text: observationEvidenceMarkdown(item), attr: { type: "button" } });
-          button.addEventListener("click", () => {
-            const journal = collectMetrics(this.app).entries.find((entry) => entry.date === item.date);
-            if (journal !== void 0) void this.plugin.openJournalDate(item.date);
-            else {
-              const sourcePath = item.sourceReports?.find((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFile);
-              if (sourcePath) void this.openWeeklyReportFile(sourcePath);
-            }
-          });
+          button.addEventListener("click", () => openEvidence(item));
+        }
+        if (items.length > limit) {
+          const more = block.createEl("details", { cls: "mind-trace-observation-evidence-more" });
+          more.createEl("summary", { text: `查看其余 ${items.length - limit} 条依据` });
+          for (const item of items.slice(limit)) {
+            const button = more.createEl("button", { cls: "mind-trace-observation-evidence-record", text: observationEvidenceMarkdown(item), attr: { type: "button" } });
+            button.addEventListener("click", () => openEvidence(item));
+          }
         }
       };
-      renderEvidence("支持记录", metrics.support, "暂无可用支持记录");
-      renderEvidence("反例", metrics.counter, "暂未找到反例，不等于不存在反例");
-      if (claim.alternative) card.createDiv({ cls: "mind-trace-observation-alternative", text: `另一种解释：${claim.alternative}` });
-      if (claim.missingInformation) card.createDiv({ cls: "mind-trace-observation-basis", text: `仍缺少的信息：${claim.missingInformation}` });
-      if (claim.verificationQuestion) card.createDiv({ cls: "mind-trace-observation-question", text: `可以问自己：${claim.verificationQuestion}` });
-      this.renderObservationFeedback(top, "claim", claim, card);
+      const evidenceGrid = card.createDiv({ cls: "mind-trace-observation-evidence-grid" });
+      renderEvidence(evidenceGrid, "支持记录", metrics.support, "暂无可用支持记录", 2);
+      renderEvidence(evidenceGrid, "反例", metrics.counter, "暂未找到反例，不等于不存在反例", 1);
+      if (claim.alternative || claim.missingInformation || claim.verificationQuestion) {
+        const boundary = card.createEl("details", { cls: "mind-trace-observation-boundary" });
+        boundary.createEl("summary", { text: "查看另一种解释与待确认信息" });
+        if (claim.alternative) boundary.createDiv({ cls: "mind-trace-observation-alternative", text: `另一种解释：${claim.alternative}` });
+        if (claim.missingInformation) boundary.createDiv({ cls: "mind-trace-observation-missing", text: `仍缺少的信息：${claim.missingInformation}` });
+        if (claim.verificationQuestion) boundary.createDiv({ cls: "mind-trace-observation-question", text: `可以问自己：${claim.verificationQuestion}` });
+      }
+      const feedback = card.createDiv({ cls: "mind-trace-observation-feedback-row" });
+      feedback.createSpan({ cls: "mind-trace-observation-feedback-prompt", text: "遵循你的感受：这条变化符合吗？" });
+      this.renderObservationFeedback(feedback, "claim", claim, card);
     }
     const closing = shell.createEl("section", { cls: "mind-trace-observation-closing" });
     closing.createDiv({ cls: "mind-trace-observation-section-title", text: "接下来值得观察什么", attr: { role: "heading", "aria-level": "2" } });
@@ -2519,12 +2578,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         event.preventDefault();
         const currentIndex = reportTabButtons.indexOf(tab);
         const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? reportTabButtons.length - 1 : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + reportTabButtons.length) % reportTabButtons.length;
-        const next = reportTabButtons[nextIndex];
         this.reportTab = reportTabOptions[nextIndex][0];
         this.render(true);
         this.ownerWindow.requestAnimationFrame(() => {
-          const target = this.containerEl.children[1]?.querySelector(`#mind-trace-report-tab-${reportTabOptions[nextIndex][0]}`);
-          if (target instanceof this.ownerWindow.HTMLElement) target.focus();
+          const target = this.contentEl.querySelector(`#mind-trace-report-tab-${reportTabOptions[nextIndex][0]}`);
+          if (target !== null && target.instanceOf(this.ownerWindow.HTMLElement)) target.focus();
         });
       });
     }
@@ -2584,22 +2642,21 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     }
     const list = section.createDiv({ cls: "mind-trace-home-rows" });
     for (const item of files) {
-      const row = list.createDiv({
+      const row = list.createEl("button", {
         cls: "mind-trace-home-row",
         attr: {
-          role: "button",
-          tabindex: "0",
+          type: "button",
           "data-report-path": item.file.path,
           "aria-label": `打开 ${item.start} 至 ${item.end} 的周报`,
           title: item.generatedAt.length > 0 ? `${item.start} 至 ${item.end} · ${weeklyGeneratedAtText(item.generatedAt)}` : `${item.start} 至 ${item.end}`
         }
       });
-      const rail = row.createDiv({
+      const rail = row.createSpan({
         cls: "mind-trace-home-rail",
         attr: { "aria-hidden": "true" }
       });
       rail.createSpan({ cls: "mind-trace-home-dot mind-trace-report-dot" });
-      const main = row.createDiv({ cls: "mind-trace-home-row-main" });
+      const main = row.createSpan({ cls: "mind-trace-home-row-main" });
       const period = main.createSpan({ cls: "mind-trace-home-date" });
       period.createSpan({ cls: "mind-trace-home-date-day", text: `${item.start.slice(5)}–${item.end.slice(5)}` });
       period.createSpan({ cls: "mind-trace-home-date-week", text: "周报" });
@@ -2617,12 +2674,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
       const open = () => void this.openWeeklyReportFile(item.file.path);
       row.addEventListener("click", open);
-      row.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          open();
-        }
-      });
     }
     void this.loadReportListSummaries(list, files);
   }
@@ -2645,30 +2696,24 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       const empty = section.createDiv({ cls: "mind-trace-empty-state" });
       empty.createDiv({ cls: "mind-trace-empty-mark", text: "等待" });
       empty.createDiv({ cls: "mind-trace-empty-title", text: "还没有月报" });
-      empty.createEl("p", { text: "达到最低活跃周后，心迹会为最近一个完整自然月生成月报；本月预览不受正式门槛限制。" });
+      empty.createEl("p", { text: "达到最低周报数后，心迹会为最近一个完整自然月生成正式月报；本月预览不受正式门槛限制。" });
       return;
     }
     const list = section.createDiv({ cls: "mind-trace-home-rows" });
     for (const item of files) {
-      const row = list.createDiv({ cls: "mind-trace-home-row", attr: { role: "button", tabindex: "0", "data-report-path": item.file.path, "aria-label": `打开 ${item.start} 至 ${item.end} 的月报`, title: item.generatedAt.length > 0 ? `${item.start} 至 ${item.end} · ${weeklyGeneratedAtText(item.generatedAt)}` : `${item.start} 至 ${item.end}` } });
-      const rail = row.createDiv({ cls: "mind-trace-home-rail", attr: { "aria-hidden": "true" } });
+      const row = list.createEl("button", { cls: "mind-trace-home-row", attr: { type: "button", "data-report-path": item.file.path, "aria-label": `打开 ${item.start} 至 ${item.end} 的月报`, title: item.generatedAt.length > 0 ? `${item.start} 至 ${item.end} · ${weeklyGeneratedAtText(item.generatedAt)}` : `${item.start} 至 ${item.end}` } });
+      const rail = row.createSpan({ cls: "mind-trace-home-rail", attr: { "aria-hidden": "true" } });
       rail.createSpan({ cls: "mind-trace-home-dot mind-trace-report-dot mind-trace-monthly-report-dot" });
-      const main = row.createDiv({ cls: "mind-trace-home-row-main" });
+      const main = row.createSpan({ cls: "mind-trace-home-row-main" });
       const period = main.createSpan({ cls: "mind-trace-home-date" });
       period.createSpan({ cls: "mind-trace-home-date-day", text: `${item.start.slice(0, 7)}` });
       period.createSpan({ cls: "mind-trace-home-date-week", text: item.status === "partial" ? "预览" : "月报" });
       if (item.status === "partial") main.createSpan({ cls: "mind-trace-report-badge", text: "截至今天" });
       main.createSpan({ cls: "mind-trace-report-row-summary mind-trace-report-list-summary", text: "正在读取摘要…" });
-      main.createSpan({ cls: "mind-trace-home-sessions", text: `${item.days} 天 · ${item.sessions} 篇 · ${item.activeWeeks} 周` });
+      main.createSpan({ cls: "mind-trace-home-sessions", text: `${item.days} 天 · ${item.sessions} 篇 · ${item.activeWeeks} 份周报` });
       (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
       const open = () => void this.openWeeklyReportFile(item.file.path);
       row.addEventListener("click", open);
-      row.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          open();
-        }
-      });
     }
     void this.loadReportListSummaries(list, files, "本月概览");
   }
@@ -2712,8 +2757,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         this.trajectoryView = nextView;
         this.render(true);
         this.ownerWindow.requestAnimationFrame(() => {
-          const target = this.containerEl.children[1]?.querySelector(`#mind-trace-trajectory-tab-${nextView}`);
-          if (target instanceof this.ownerWindow.HTMLElement) target.focus();
+          const target = this.contentEl.querySelector(`#mind-trace-trajectory-tab-${nextView}`);
+          if (target !== null && target.instanceOf(this.ownerWindow.HTMLElement)) target.focus();
         });
       };
       tab.addEventListener("click", () => activate(view));
@@ -2926,7 +2971,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     }
   }
   renderTrajectoryEventCard(container, record, selectedEntityKey = "") {
-    const card = container.createEl("article", { cls: `mind-trace-trajectory-event-card is-${record.type}`, attr: { role: "button", tabindex: "0", "aria-label": `打开 ${record.date} ${record.time} 的${EVENT_TYPE_LABELS[record.type] ?? "事件"}：${record.title}`, title: `${record.filePath} · session ${record.sessionIndex} · event ${record.eventIndex} · ${record.id}` } });
+    const card = container.createEl("article", { cls: `mind-trace-trajectory-event-card is-${record.type}` });
+    const openButton = card.createEl("button", { cls: "mind-trace-trajectory-event-open", attr: { type: "button", "aria-label": `打开 ${record.date} ${record.time} 的${EVENT_TYPE_LABELS[record.type] ?? "事件"}：${record.title}`, title: `${record.filePath} · session ${record.sessionIndex} · event ${record.eventIndex} · ${record.id}` } });
     const marker = card.createDiv({ cls: "mind-trace-trajectory-event-marker", attr: { "aria-hidden": "true" } });
     marker.createSpan({ text: record.time || "—" });
     const body = card.createDiv({ cls: "mind-trace-trajectory-event-body" });
@@ -2952,8 +2998,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       }
     }
     const open = () => void this.openJournalFile(record.filePath, record.sessionIndex, record);
-    card.addEventListener("click", open);
-    card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
+    openButton.addEventListener("click", open);
   }
   renderJournal(container) {
     const draft = this.plugin.draft ?? createDraft(this.plugin.settings);
@@ -2999,7 +3044,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         attr: { role: "heading", "aria-level": "2" }
       });
       setup.createEl("p", {
-        text: "配置模型名称和 API Key 后，就可以开始第一篇心迹日记。"
+        text: "配置模型名称和 API key 后，就可以开始第一篇心迹日记。"
       });
       const button = setup.createEl("button", {
         cls: "mod-cta",
@@ -3156,7 +3201,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         cls: "mind-trace-checkin-strip-thumb"
       });
       const positionThumb = (score) => {
-        stripThumb.style.left = `calc(${(score - 1) * 25}% - ${(score - 1) * 3}px)`;
+        stripThumb.setCssProps({ left: `calc(${(score - 1) * 25}% - ${(score - 1) * 3}px)` });
       };
       positionThumb(ratingValues[key]);
       const scale = card.createDiv({
@@ -3234,7 +3279,21 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     });
     this.renderTimelineHistory(flow, draft);
     if (question === null) {
-      const recovery = flow.createDiv({
+      const decisionStage = flow.createDiv({
+        cls: "mind-trace-writing-stage mind-trace-decision-stage"
+      });
+      const decisionMargin = decisionStage.createDiv({
+        cls: "mind-trace-writing-margin",
+        attr: { "aria-hidden": "true" }
+      });
+      const decisionIndex = decisionMargin.createDiv({
+        cls: "mind-trace-writing-index mind-trace-decision-index"
+      });
+      decisionIndex.createSpan({ text: "?" });
+      decisionMargin.createDiv({
+        cls: "mind-trace-writing-rule"
+      });
+      const recovery = decisionStage.createDiv({
         cls: "mind-trace-decision-card mind-trace-record-decision"
       });
       const decisionMark = recovery.createDiv({ cls: "mind-trace-decision-mark", attr: { "aria-hidden": "true" } });
@@ -3273,8 +3332,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         void this.generateEntry(draft);
       });
       if (draft.answers.length > 0) {
-        this.scrollTimelineTo(recovery);
+        this.scrollTimelineTo(decisionStage);
       }
+      this.alignRecordContext(contextRail, flow, decisionStage);
       return;
     }
     const isAdaptiveQuestion = coreQuestion === void 0;
@@ -3329,6 +3389,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       }
     });
     autoGrow(answer);
+    this.alignRecordContext(contextRail, flow, writingStage);
     answer.disabled = this.busy;
     const footer = sheet.createDiv({
       cls: "mind-trace-question-footer"
@@ -3386,6 +3447,27 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     if (draft.answers.length > 0) {
       this.scrollTimelineTo(writingStage, answer);
     }
+  }
+  alignRecordContext(contextRail, flow, target) {
+    this.recordContextObserver?.disconnect();
+    const update = () => {
+      if (!contextRail.isConnected || !flow.isConnected || !target.isConnected) return;
+      const flowRect = flow.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const contextRect = contextRail.getBoundingClientRect();
+      const targetTop = targetRect.top - flowRect.top;
+      const centered = targetTop + (targetRect.height - contextRect.height) / 2;
+      const maximum = Math.max(0, flow.scrollHeight - contextRect.height);
+      contextRail.setCssProps({ "--mind-trace-record-context-offset": `${Math.max(0, Math.min(maximum, centered))}px` });
+    };
+    const schedule = () => this.ownerWindow.requestAnimationFrame(update);
+    if (this.ownerWindow.ResizeObserver !== void 0) {
+      this.recordContextObserver = new this.ownerWindow.ResizeObserver(schedule);
+      this.recordContextObserver.observe(flow);
+      this.recordContextObserver.observe(target);
+      this.recordContextObserver.observe(contextRail);
+    }
+    schedule();
   }
   renderRecordContext(container, draft, coreQuestions, adaptiveQuestionLimit) {
     const answered = Array.isArray(draft.answers) ? draft.answers.length : 0;
@@ -3522,7 +3604,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           return;
         }
         edit.disabled = true;
-        answerCopy.style.display = "none";
+        answerCopy.hide();
         const form = copy.createEl("form", {
           cls: "mind-trace-history-edit-form"
         });
@@ -3547,7 +3629,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         });
         const finish = () => {
           form.remove();
-          answerCopy.style.display = "";
+          answerCopy.show();
           edit.disabled = false;
         };
         cancel.addEventListener("click", finish);
@@ -3619,7 +3701,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       }
       parent = parent.parentElement;
     }
-    return this.containerEl.children[1];
+    return this.contentEl;
   }
   leaveQuestionCard(stage, answer, actions, next) {
     answer.disabled = true;
@@ -3692,7 +3774,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       cls: "mind-trace-editor-area mind-trace-diary-editor",
       text: generated.diary,
       attr: {
-        rows: "9",
+        rows: "3",
         "aria-label": "日记正文"
       }
     });
@@ -4095,7 +4177,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       return;
     }
     if (draft.adaptiveCount >= draftAdaptiveQuestionLimit(draft)) {
-      await this.generateEntry(draft);
+      this.generateEntry(draft);
     } else {
       await this.decideFollowUp(draft);
     }
@@ -4149,8 +4231,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         this.render(true);
       },
       onViewResult: () => {
-        const container = this.containerEl.children[1];
-        findMindTraceScroller(container).scrollTo({ top: 0, behavior: this.ownerWindow.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+        findMindTraceScroller(this.contentEl).scrollTo({ top: 0, behavior: this.ownerWindow.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
       },
       successTitle: "日记校样已经整理好",
       successDetail: "可以继续修改正文、事件、反思和主题，确认后再保存。",
@@ -4160,7 +4241,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   }
   async persistAndGenerate(draft) {
     await this.plugin.setDraft(draft);
-    await this.generateEntry(draft);
+    this.generateEntry(draft);
   }
   async generateEntryContent(draft, onProgress = null) {
     this.busyText = "正在独立评估状态并整理日记…";

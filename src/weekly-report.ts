@@ -50,12 +50,29 @@ function weeklyPeriodStatus(period) {
   return "partial";
 }
 function weeklyReportFrontmatterStatus(frontmatter) {
-  if (frontmatter?.["period-status"] === "partial" || frontmatter?.["period-status"] === "complete") {
-    return frontmatter["period-status"];
-  }
   const start = typeof frontmatter?.["period-start"] === "string" ? frontmatter["period-start"] : "";
   const end = typeof frontmatter?.["period-end"] === "string" ? frontmatter["period-end"] : "";
-  return weeklyPeriodStatus({ start, end });
+  const inferred = weeklyPeriodStatus({ start, end });
+  if (inferred === "complete") {
+    return "complete";
+  }
+  return frontmatter?.["period-status"] === "complete" ? "complete" : "partial";
+}
+function generatedWeeklyReportCount(app, period) {
+  const periods = new Set();
+  for (const file of app.vault.getMarkdownFiles()) {
+    const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (frontmatter?.["mind-trace-report"] !== true || frontmatter?.["report-type"] !== "weekly" || weeklyReportFrontmatterStatus(frontmatter) !== "complete") {
+      continue;
+    }
+    const start = typeof frontmatter["period-start"] === "string" ? frontmatter["period-start"] : "";
+    const end = typeof frontmatter["period-end"] === "string" ? frontmatter["period-end"] : "";
+    if (parseLocalDate(start) === null || parseLocalDate(end) === null || start > period.end || end < period.start) {
+      continue;
+    }
+    periods.add(`${start}--${end}`);
+  }
+  return periods.size;
 }
 function weeklyReportPath(settings, period) {
   return (0, import_obsidian6.normalizePath)(`${weeklyReportFolder(settings)}/${period.start}--${period.end}.md`);
@@ -227,7 +244,7 @@ function monthlyReportMarkdown(source, report) {
     `| 维度 | 本月 | ${comparisonLabel} |`,
     "| --- | ---: | ---: |",
     `| 记录日 | ${stats.days} 天 | ${stats.days - previous.days >= 0 ? "+" : ""}${stats.days - previous.days} 天 |`,
-    `| 活跃周 | ${stats.activeWeeks} 周 | ${stats.activeWeeks - previous.activeWeeks >= 0 ? "+" : ""}${stats.activeWeeks - previous.activeWeeks} 周 |`,
+    `| 已生成周报 | ${stats.activeWeeks} 份 | ${stats.activeWeeks - previous.activeWeeks >= 0 ? "+" : ""}${stats.activeWeeks - previous.activeWeeks} 份 |`,
     `| 心情 | ${scoreCell(stats.mood)} | ${scoreDelta(stats, previous, "mood")} |`,
     `| 精力 | ${scoreCell(stats.energy)} | ${scoreDelta(stats, previous, "energy")} |`,
     `| 压力 | ${scoreCell(stats.stress)} | ${scoreDelta(stats, previous, "stress")} |`,
@@ -467,8 +484,8 @@ var WeeklyReportRepository = class {
       }
     }
     const weekStats = activeWeekStats(entries.filter((entry) => successfulDays.has(entry.date)), period);
-    stats.activeWeeks = weekStats.length;
-    previousStats.activeWeeks = activeWeekStats(periodEntries(allEntries, comparison), comparison).length;
+    stats.activeWeeks = period.type === "monthly" ? generatedWeeklyReportCount(this.app, period) : weekStats.length;
+    previousStats.activeWeeks = period.type === "monthly" ? generatedWeeklyReportCount(this.app, comparison) : activeWeekStats(periodEntries(allEntries, comparison), comparison).length;
     const excerptText = excerpts.join("\n\n");
     if (period.type === "monthly" && excerptText.length > 24e3) {
       truncated = true;
@@ -634,10 +651,10 @@ function observationFolder(settings) {
   return (0, import_obsidian6.normalizePath)(`${journalFolder}/观照`);
 }
 function observationStatusLabel(status) {
-  return status === "confirmed" ? "确认" : status === "rejected" ? "否认" : "暂存";
+  return status === "confirmed" ? "确认" : status === "partial" ? "部分符合" : status === "rejected" ? "否认" : status === "uncertain" ? "不确定" : "待校准";
 }
 function observationStatusValue(label) {
-  return label === "确认" ? "confirmed" : label === "否认" ? "rejected" : "pending";
+  return label === "确认" ? "confirmed" : label === "部分符合" ? "partial" : label === "否认" ? "rejected" : label === "不确定" ? "uncertain" : "pending";
 }
 function observationFrontmatter(snapshot) {
   const sources = Array.isArray(snapshot.sources) ? snapshot.sources : [];
@@ -671,7 +688,6 @@ function observationSubsection(block, heading) {
 }
 function observationMarkdown(snapshot) {
   const analysis = snapshot.analysis;
-  const evidenceById = new Map((snapshot.evidence ?? []).map((item) => [item.id, item]));
   const lines = [observationFrontmatter(snapshot), "", "# 最近的变化全景", "", "## 概览", "", analysis.summary, ""];
   for (const dimension of OBSERVATION_DIMENSIONS) {
     const claims = analysis.claims.filter((claim) => claim.dimension === dimension);
@@ -834,7 +850,7 @@ var ObservationRepository = class extends WeeklyReportRepository {
       }
       const snapshot = parseObservationMarkdown(content, file.path);
       if (!snapshot.analysis?.claims?.some((claim) => claim.key === claimId)) throw new Error("找不到要校准的观察条目");
-      snapshot.feedback[claimId] = { status: ["confirmed", "rejected", "pending"].includes(value?.status) ? value.status : "pending", correction: String(value?.correction ?? "").slice(0, 800), updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      snapshot.feedback[claimId] = { status: ["confirmed", "partial", "rejected", "uncertain", "pending"].includes(value?.status) ? value.status : "pending", correction: String(value?.correction ?? "").slice(0, 800), updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
       updated = observationMarkdown(snapshot);
       return updated;
     });

@@ -2,11 +2,11 @@ import * as import_obsidian7 from "obsidian";
 export { mindTraceDocument, mindTraceWindow, mindTraceWorkspaceDocument, showMindTraceNotice };
 
 function mindTraceDocument(element = null) {
-  return element?.ownerDocument ?? globalThis.document;
+  return element?.ownerDocument ?? activeDocument;
 }
 
 function mindTraceWindow(element = null) {
-  return (mindTraceDocument(element)?.defaultView ?? globalThis.window) as Window & typeof globalThis;
+  return (mindTraceDocument(element)?.defaultView ?? activeWindow) as Window & typeof window;
 }
 
 function mindTraceWorkspaceDocument(app) {
@@ -16,6 +16,6 @@ function mindTraceWorkspaceDocument(app) {
 
 function showMindTraceNotice(message, timeout = 4e3) {
   const notice = new import_obsidian7.Notice(message, timeout);
-  notice.noticeEl?.classList.add("mind-trace-notice");
+  notice.messageEl?.classList.add("mind-trace-notice");
   return notice;
 }

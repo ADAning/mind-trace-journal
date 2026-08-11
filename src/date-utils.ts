@@ -149,12 +149,15 @@ function formationProgress(entries, period, minimum) {
     overflow: Math.max(0, days - safeMinimum)
   };
 }
-function monthlyWeekSegments(entries, period, minimum) {
+function monthlyWeekSegments(entries, period, minimum, generatedWeeklyPeriods = []) {
   const safeMinimum = Math.max(1, minimum);
   const monthStart = parseLocalDate(period.start);
   if (monthStart === null) {
     return [];
   }
+  const generatedWeeks = new Set(
+    (Array.isArray(generatedWeeklyPeriods) ? generatedWeeklyPeriods : []).map((item) => `${item?.start ?? ""}--${item?.end ?? ""}`)
+  );
   const lastDayOfMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
   const monthStartOrd = localDayOrdinal(monthStart);
   const monthEndOrd = localDayOrdinal(lastDayOfMonth);
@@ -165,21 +168,23 @@ function monthlyWeekSegments(entries, period, minimum) {
     const segStartOrd = localDayOrdinal(cursor);
     const segEndOrd = localDayOrdinal(segEnd);
     const inMonthDays = Math.min(segEndOrd, monthEndOrd) - Math.max(segStartOrd, monthStartOrd) + 1;
-    const isTail = cursor < monthStart;
-    const isHead = segEnd > lastDayOfMonth;
-    if (isTail || !isHead || inMonthDays >= safeMinimum) {
-      const segPeriod = { start: localDateString(cursor), end: localDateString(segEnd) };
-      const days = metricSnapshot(periodEntries(entries, segPeriod)).days;
-      segments.push({
-        start: segPeriod.start,
-        end: segPeriod.end,
-        days,
-        minimum: safeMinimum,
-        percent: (days / safeMinimum) * 100,
-        overflow: Math.max(0, days - safeMinimum),
-        reached: days >= safeMinimum
-      });
-    }
+    const segPeriod = { start: localDateString(cursor), end: localDateString(segEnd) };
+    const days = metricSnapshot(periodEntries(entries, segPeriod)).days;
+    const future = segPeriod.start > period.end;
+    const reportGenerated = generatedWeeks.has(`${segPeriod.start}--${segPeriod.end}`);
+    segments.push({
+      start: segPeriod.start,
+      end: segPeriod.end,
+      inMonthDays,
+      days,
+      minimum: safeMinimum,
+      percent: future ? 0 : (days / safeMinimum) * 100,
+      overflow: future ? 0 : Math.max(0, days - safeMinimum),
+      eligible: !future && days >= safeMinimum,
+      reportGenerated,
+      future,
+      reached: reportGenerated
+    });
     cursor = addLocalDays(segEnd, 1);
   }
   return segments;

@@ -29,7 +29,7 @@ export class ReportCoordinator {
       source = await this.host.weeklyReportRepository.collect(period);
       this.weeklyReportSourceCache.set(key, source);
     }
-    const file = this.host.weeklyReportRepository.find(this.host.settings, period);
+    const { file, completingPreview } = this.host.weeklyReportRepository.resolveWriteTarget(this.host.settings, period);
     if (file !== null) {
       const content = await this.host.app.vault.cachedRead(file);
       let metadata: Record<string, any> = {};
@@ -39,10 +39,11 @@ export class ReportCoordinator {
       }
       const sourceChanged = Number(metadata["source-days"]) !== source.stats.days || Number(metadata["source-sessions"]) !== source.stats.sessions;
       return {
-        kind: sourceChanged || this.host.weeklyReportRepository.isStale(file, source) ? "stale" : "ready",
+        kind: completingPreview || sourceChanged || this.host.weeklyReportRepository.isStale(file, source) ? "stale" : "ready",
         period,
         source,
         file,
+        preview: completingPreview,
         summary: reportSummaryFromMarkdown(content)
       };
     }
@@ -125,7 +126,7 @@ export class ReportCoordinator {
       onProgress?.({ stage: 1, total: 8, title: "读取本月记录", detail: "正在收集日记、已有事件和月报状态。" });
       const status = await this.monthlyReportStatus(period);
       if ((status.kind === "ready" || status.kind === "stale") && !overwrite) return status;
-      if (status.kind === "insufficient") throw new Error(period.status === "partial" ? "本月至少需要 1 个记录日才能生成预览" : `至少需要 ${status.minimum} 个活跃自然周才能生成月报`);
+      if (status.kind === "insufficient") throw new Error(period.status === "partial" ? "本月至少需要 1 个记录日才能生成预览" : `至少需要 ${status.minimum} 份已生成周报才能生成正式月报`);
       if (status.kind === "unconfigured") throw new Error("请先在心迹设置中配置模型与 API Key");
       const expectedReportVersion = this.host.monthlyReportRepository.captureWriteVersion(this.host.settings, period);
       let source = status.source;

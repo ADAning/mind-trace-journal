@@ -75,8 +75,8 @@ function ratingComparisonLines(draft) {
   ];
 }
 function createEventId() {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
+  if (typeof activeWindow.crypto?.randomUUID === "function") {
+    return activeWindow.crypto.randomUUID();
   }
   return `event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -381,12 +381,23 @@ function regeneratedSessionMarkdown(documentDate, replacement) {
   });
 }
 function updateJournalHeaderText(content, themes) {
-  let updated = content.replace(/^(mind-trace-version:)\s*\d+\s*$/m, `$1 ${JOURNAL_SCHEMA_VERSION}`);
-  if (updated === content && /^---\s*$/m.test(updated)) {
-    updated = updated.replace(/^---\s*$/m, `---\nmind-trace-version: ${JOURNAL_SCHEMA_VERSION}`);
+  const info = (0, import_obsidian6.getFrontMatterInfo)(content);
+  if (!info.exists) {
+    throw new Error("日记属性已损坏");
   }
-  const themeLine = `themes: [${[...new Set(themes)].map(yamlString).join(", ")}]`;
-  if (/^themes:\s*.*$/m.test(updated)) updated = updated.replace(/^themes:\s*.*$/m, themeLine);
+  const parsed = (0, import_obsidian6.parseYaml)(info.frontmatter);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || parsed["mind-trace"] !== true) {
+    throw new Error("日记属性已损坏");
+  }
+  parsed["mind-trace-version"] = JOURNAL_SCHEMA_VERSION;
+  parsed.themes = [...new Set(themes)];
+  const yaml = (0, import_obsidian6.stringifyYaml)(parsed);
+  const updated = `${content.slice(0, info.from)}${yaml}${content.slice(info.to)}`;
+  const updatedInfo = (0, import_obsidian6.getFrontMatterInfo)(updated);
+  const updatedFrontmatter = updatedInfo.exists ? (0, import_obsidian6.parseYaml)(updatedInfo.frontmatter) : null;
+  if (typeof updatedFrontmatter !== "object" || updatedFrontmatter === null || Array.isArray(updatedFrontmatter) || updatedFrontmatter["mind-trace"] !== true || updatedFrontmatter["mind-trace-version"] !== JOURNAL_SCHEMA_VERSION) {
+    throw new Error("日记属性更新失败");
+  }
   return updated;
 }
 function replaceJournalSessionsContent(content, document2, replacements) {

@@ -17,6 +17,10 @@ import { MindTraceSettingTab } from "./settings";
 import { JournalRepository } from "./storage";
 import { MonthlyReportRepository, ObservationRepository, WeeklyReportRepository, legacyObservationMarkdown } from "./weekly-report";
 
+function isSettingsManager(value) {
+  return typeof value === "object" && value !== null && typeof Reflect.get(value, "open") === "function" && typeof Reflect.get(value, "openTabById") === "function";
+}
+
 var MindTracePlugin = class extends import_obsidian7.Plugin {
   settings: any = structuredClone(DEFAULT_SETTINGS);
   draft: any = null;
@@ -38,7 +42,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   activeOperations = /* @__PURE__ */ new Set<{ cancelFromPlugin?: () => void }>();
   pendingTimeouts = /* @__PURE__ */ new Set();
   get ownerWindow() {
-    return mindTraceWorkspaceDocument(this.app).defaultView ?? globalThis.window;
+    return mindTraceWorkspaceDocument(this.app).defaultView ?? activeWindow;
   }
   async onload() {
     this.unloading = false;
@@ -72,15 +76,15 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       void this.openJournal();
     });
     this.addCommand({
-      id: "open-mind-trace-journal",
-      name: "打开心迹记录",
+      id: "open-journal",
+      name: "打开记录",
       callback: () => {
         void this.openJournal();
       }
     });
     this.addCommand({
-      id: "lock-mind-trace",
-      name: "立即锁定心迹",
+      id: "lock",
+      name: "立即锁定",
       callback: () => {
         this.lockPrivacy(true);
       }
@@ -125,7 +129,6 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.app.workspace.onLayoutReady(() => {
       if (this.unloading) return;
       void this.migrateLegacyObservation();
-      void this.normalizeRestoredViews();
       void this.protectOpenMindTraceFiles();
     });
     this.registerEvent(
@@ -164,7 +167,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.lifecycleAbortController.abort();
     for (const operation of [...this.activeOperations]) operation.cancelFromPlugin?.();
     this.activeOperations.clear();
-    const ownerWindow = mindTraceWorkspaceDocument(this.app).defaultView ?? globalThis.window;
+    const ownerWindow = mindTraceWorkspaceDocument(this.app).defaultView ?? activeWindow;
     for (const timeout of this.pendingTimeouts) ownerWindow.clearTimeout(timeout);
     this.pendingTimeouts.clear();
     this.privacyController?.dispose();
@@ -192,7 +195,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   }
   scheduleTimeout(callback, delay) {
     if (this.unloading) return null;
-    const ownerWindow = mindTraceWorkspaceDocument(this.app).defaultView ?? globalThis.window;
+    const ownerWindow = mindTraceWorkspaceDocument(this.app).defaultView ?? activeWindow;
     const timeout = ownerWindow.setTimeout(() => {
       this.pendingTimeouts.delete(timeout);
       if (!this.unloading) callback();
@@ -350,9 +353,17 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
   }
   openSettings() {
-    const app = this.app as any;
-    app.setting.open();
-    app.setting.openTabById(this.manifest.id);
+    const settingsManager = Reflect.get(this.app, "setting");
+    if (!isSettingsManager(settingsManager)) {
+      showMindTraceNotice("请在 Obsidian 设置的第三方插件中打开“心迹”");
+      return;
+    }
+    try {
+      Reflect.apply(Reflect.get(settingsManager, "open"), settingsManager, []);
+      Reflect.apply(Reflect.get(settingsManager, "openTabById"), settingsManager, [this.manifest.id]);
+    } catch {
+      showMindTraceNotice("无法自动打开设置，请在 Obsidian 设置的第三方插件中选择“心迹”");
+    }
   }
   async openProtectedMarkdownSource(leaf, file) {
     if (!this.isPrivacyUnlocked()) {
@@ -586,14 +597,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   }
   async openJournal() {
     const journalLeaves = this.app.workspace.getLeavesOfType(JOURNAL_VIEW_TYPE);
-    let leaf = journalLeaves.find(
-      (candidate) => this.isMainLeaf(candidate)
-    );
-    for (const candidate of journalLeaves) {
-      if (!this.isMainLeaf(candidate)) {
-        candidate.detach();
-      }
-    }
+    let leaf = journalLeaves[0];
     if (leaf === void 0) {
       leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({
@@ -602,12 +606,6 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       });
     }
     await this.app.workspace.revealLeaf(leaf);
-  }
-  async normalizeRestoredViews() {
-    const misplacedJournal = this.app.workspace.getLeavesOfType(JOURNAL_VIEW_TYPE).some((leaf) => !this.isMainLeaf(leaf));
-    if (misplacedJournal) {
-      await this.openJournal();
-    }
   }
   async openMindTraceFile(file) {
     if (!(file instanceof import_obsidian7.TFile)) {
@@ -691,15 +689,6 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     } catch {
       return SAVED_JOURNAL_VIEW_TYPE;
     }
-  }
-  isMainLeaf(leaf) {
-    let isMain = false;
-    this.app.workspace.iterateRootLeaves((candidate) => {
-      if (candidate === leaf) {
-        isMain = true;
-      }
-    });
-    return isMain;
   }
   emitMetricsChanged() {
     this.reportCoordinator?.clearSourceCaches();

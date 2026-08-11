@@ -1,5 +1,4 @@
 // src/journal-view.ts
-import * as import_obsidian4 from "obsidian";
 import { draftEntryDate, localDayOrdinal, parseLocalDate, periodWeekStart } from "./date-utils";
 import { average, themeFrequency } from "./metrics";
 
@@ -152,7 +151,6 @@ var EVENT_RELATION_LABEL_VALUES = Object.fromEntries(
 var EVENT_RELATION_TYPES = Object.keys(EVENT_RELATION_LABELS);
 var MAX_SESSION_EVENTS = 20;
 var MAX_EVENT_ARGUMENTS = 16;
-var MAX_EVENT_ELEMENTS = MAX_EVENT_ARGUMENTS;
 var MAX_EVENT_RELATIONS = 12;
 var MAX_EVENT_TRACES = 12;
 function normalizeEventElementName(value) {
@@ -455,7 +453,7 @@ function monthlyStatsText(current, comparison, periodStatus = "complete") {
   const score = (value) => value === null ? "无数据" : value.toFixed(1);
   const delta = (key) => current[key] === null || comparison[key] === null ? "无法对比" : `${current[key] - comparison[key] >= 0 ? "+" : ""}${(current[key] - comparison[key]).toFixed(1)}`;
   return [
-    `记录 ${current.days} 天、${current.sessions} 篇，活跃自然周 ${current.activeWeeks} 周`,
+    `记录 ${current.days} 天、${current.sessions} 篇，已生成完整周报 ${current.activeWeeks} 份`,
     `心情 ${score(current.mood)}（较${comparisonLabel} ${delta("mood")}）`,
     `精力 ${score(current.energy)}（较${comparisonLabel} ${delta("energy")}）`,
     `压力 ${score(current.stress)}（较${comparisonLabel} ${delta("stress")}）`,
@@ -482,7 +480,7 @@ function buildMonthlyReportMessages(source, settings) {
     },
     {
       role: "user",
-      content: `报告周期：${source.period.start} 至 ${source.period.end}（${source.period.status === "partial" ? "截至今天的部分预览" : "完整自然月"}）\n\n本地确定性统计：\n${monthlyStatsText(source.stats, source.previousStats, source.period.status)}\n\n月度节律轴：\n${rhythm || "暂无活跃自然周"}\n\n事件目录：\n${reportEventCatalogText(source)}\n\n日记事实摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
+      content: `报告周期：${source.period.start} 至 ${source.period.end}（${source.period.status === "partial" ? "截至今天的部分预览" : "完整自然月"}）\n\n本地确定性统计：\n${monthlyStatsText(source.stats, source.previousStats, source.period.status)}\n\n月度节律轴：\n${rhythm || "暂无可用周记录"}\n\n事件目录：\n${reportEventCatalogText(source)}\n\n日记事实摘录：\n${source.excerpts}${source.truncated ? "\n\n注：输入过长，已截取部分较早内容。" : ""}`
     }
   ];
 }
@@ -898,7 +896,7 @@ function observationFeedbackContext(analysis, feedback = {}) {
     for (const item of items) {
       const key = typeof item.key === "string" ? item.key : "";
       const itemFeedback = key.length > 0 ? feedback[key] : null;
-      if (itemFeedback === null || typeof itemFeedback !== "object" || !["confirmed", "rejected", "pending"].includes(itemFeedback.status)) {
+      if (itemFeedback === null || typeof itemFeedback !== "object" || !["confirmed", "partial", "rejected", "uncertain", "pending"].includes(itemFeedback.status)) {
         continue;
       }
       context[key] = {
@@ -1026,7 +1024,6 @@ function computeObservationMaturity(reports) {
   const last = parseLocalDate(independentEvidenceDates[independentEvidenceDates.length - 1] ?? "");
   const spanDays = first !== null && last !== null ? localDayOrdinal(last) - localDayOrdinal(first) : 0;
   const periodCount = completeIndependentSources.length;
-  const initialReady = eligible.length >= 1;
   const crossReady = periodCount >= 2 && independentEvidenceDates.length >= 2;
   const continuousReady = periodCount >= 4 && independentEvidenceDates.length >= 4 && spanDays >= 28;
   const stage = continuousReady ? "continuous" : crossReady ? "cross_period" : "initial";
@@ -1051,10 +1048,35 @@ function computeObservationMaturity(reports) {
   return maturity;
 }
 function observationSnapshotMaturity(snapshot) {
-  if (snapshot?.maturity && ["initial", "cross_period", "continuous"].includes(snapshot.maturity.stage)) {
-    return snapshot.maturity;
+  const saved = snapshot?.maturity;
+  const completeSaved = saved && ["initial", "cross_period", "continuous"].includes(saved.stage) && [
+    saved.eligibleReportCount,
+    saved.independentPeriodCount,
+    saved.uniqueEvidenceDateCount,
+    saved.allUniqueEvidenceDateCount,
+    saved.evidenceSpanDays,
+    saved.remaining?.crossPeriodPeriods,
+    saved.remaining?.crossPeriodEvidenceDates,
+    saved.remaining?.continuousPeriods,
+    saved.remaining?.continuousEvidenceDates,
+    saved.remaining?.continuousSpanDays
+  ].every((value) => Number.isFinite(Number(value)));
+  if (completeSaved) {
+    return saved;
   }
-  return computeObservationMaturity(snapshot?.sources ?? []);
+  const evidence = Array.isArray(snapshot?.evidence) ? snapshot.evidence : [];
+  const sources = (Array.isArray(snapshot?.sources) ? snapshot.sources : []).map((source) => {
+    const path = observationDescriptorPath(source);
+    const interval = observationInterval(source);
+    const evidenceDates = [...new Set(evidence.filter((item) => {
+      const date = observationDateValue(item?.date);
+      if (date.length === 0 || interval === null || date < interval.start || date > interval.end) return false;
+      const linked = Array.isArray(item?.sourceReports) ? item.sourceReports : [];
+      return linked.length === 0 || linked.includes(path);
+    }).map((item) => item.date))];
+    return { ...source, evidenceDates };
+  });
+  return computeObservationMaturity(sources);
 }
 function observationSourceSignature(source) {
   return `${source?.type ?? ""}|${source?.periodStart ?? ""}|${source?.periodEnd ?? ""}|${source?.periodStatus === "partial" ? "partial" : "complete"}`;
@@ -1143,7 +1165,7 @@ function buildObservationMessages(reports, feedback: Record<string, any> = {}, m
         "不要定义人格、疾病、受保护属性或身份。事实、归纳和待验证假设必须分层；不把变化评价为好或坏。",
         "dimension 只能是 想法、行为、认知、情绪、关系、目标；layer 只能是 fact、inference、hypothesis。每条 claim 必须引用证据目录中的 supportEvidenceRefs。",
         "inference 与 hypothesis 必须同时提供 alternative、missingInformation、verificationQuestion；counterEvidenceRefs 用于引用合理反例，没有时返回空数组。",
-        "反馈语义：confirmed 表示用户确认符合，rejected 表示用户明确否认不符合，pending 表示用户暂保留；请尊重 rejected 与 correction，避免重复被否认的说法。",
+        "反馈语义：confirmed 表示用户确认符合，partial 表示部分符合，rejected 表示明确不符合，uncertain 表示暂时不确定，pending 表示尚未校准；请尊重 rejected、partial 与 correction，避免重复被否认的说法。",
         `成熟度统计：stage=${maturity.stage}；可解析回顾 ${maturity.eligibleReportCount} 份；选中的互不重叠完整周期 ${maturity.independentPeriodCount} 个；选中来源证据日期 ${maturity.uniqueEvidenceDateCount} 个；证据跨度 ${maturity.evidenceSpanDays} 天。周报和月报可能覆盖同一段时间，重叠不等于独立证据，报告数量不等于置信度。${observationStageRules(maturity.stage)}`,
         "最多返回 8 条 claims。不要输出置信百分比；依据充分度由本地计算。",
         '只输出 JSON：{"summary":"string","claims":[{"dimension":"想法|行为|认知|情绪|关系|目标","layer":"fact|inference|hypothesis","statement":"string","before":"string","now":"string","supportEvidenceRefs":["EV-..."],"counterEvidenceRefs":[],"alternative":"string","missingInformation":"string","verificationQuestion":"string"}],"nextObservation":"string"}'

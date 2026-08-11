@@ -1,9 +1,9 @@
-:root {
+body {
   --mind-trace-role-record: #635bce;
   --mind-trace-role-trajectory: #3f78b5;
-  --mind-trace-role-mood: #b84f45;
-  --mind-trace-role-energy: #2f7e68;
-  --mind-trace-role-stress: #a5650f;
+  --mind-trace-role-mood: #ba6258;
+  --mind-trace-role-energy: #4f7d67;
+  --mind-trace-role-stress: #a8702e;
   --mind-trace-role-observation: #7655a8;
   --mind-trace-readable-meta: color-mix(in srgb, var(--text-muted) 72%, var(--text-normal));
   --mind-trace-readable-placeholder: color-mix(in srgb, var(--text-muted) 68%, var(--text-normal));
@@ -13,20 +13,30 @@
   --mind-trace-radius-panel: 11px;
   --mind-trace-radius-control: 8px;
   --mind-trace-transition: 180ms ease-out;
+  --mind-trace-role-foreground: var(--text-on-accent);
+  --mind-trace-heat-foreground: var(--text-on-accent-inverted);
+  --mind-trace-shadow-color: var(--background-modifier-box-shadow, rgb(0 0 0 / 0.18));
+  --mind-trace-cover: var(--background-modifier-cover, rgb(0 0 0 / 0.45));
+  --mind-trace-content-width: 1180px;
+  --mind-trace-content-padding: clamp(18px, 3vw, 36px);
+  --mind-trace-title-font: var(--font-interface, "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+  --mind-trace-body-font: var(--font-interface, "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+  --mind-trace-mono-font: var(--font-monospace, ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace);
 }
 
 .theme-dark {
   --mind-trace-role-record: #9a91f0;
   --mind-trace-role-trajectory: #76add7;
-  --mind-trace-role-mood: #ef8a7d;
-  --mind-trace-role-energy: #6fc2a2;
-  --mind-trace-role-stress: #e2aa5b;
+  --mind-trace-role-mood: #d88479;
+  --mind-trace-role-energy: #79a98f;
+  --mind-trace-role-stress: #d0a05d;
   --mind-trace-role-observation: #be9ae8;
   --mind-trace-readable-meta: color-mix(in srgb, var(--text-muted) 80%, var(--text-normal));
   --mind-trace-readable-placeholder: color-mix(in srgb, var(--text-muted) 84%, var(--text-normal));
   --mind-trace-keyline: color-mix(in srgb, var(--text-muted) 44%, var(--background-primary));
   --mind-trace-keyline-strong: color-mix(in srgb, var(--text-normal) 52%, var(--background-primary));
   --mind-trace-wash: color-mix(in srgb, var(--background-secondary) 76%, var(--background-primary));
+  --mind-trace-role-foreground: var(--text-on-accent-inverted);
 }
 
 .mind-trace-view,
@@ -85,14 +95,6 @@
   height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable;
-}
-
-.workspace-leaf-content[data-type="mind-trace-journal-view"] .view-header {
-  display: none;
-}
-
-.workspace-leaf-content[data-type="mind-trace-journal-view"] .mind-trace-view {
-  padding: 0 !important;
 }
 
 .mind-trace-dashboard {
@@ -307,7 +309,7 @@
   box-shadow: none;
   background: transparent;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-ui-medium);
   line-height: 1.55;
   resize: none;
@@ -350,7 +352,7 @@
 .mind-trace-eyebrow {
   margin-bottom: var(--size-4-2);
   color: var(--text-accent);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
   letter-spacing: 0.16em;
@@ -359,7 +361,7 @@
 .mind-trace-journal-title {
   margin: 0;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: clamp(1.9em, 4vw, 2.8em);
   font-weight: 650;
   letter-spacing: -0.02em;
@@ -407,7 +409,7 @@
   max-width: 30em;
   margin: 0;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: clamp(1.35em, 2.6vw, 1.75em);
   font-weight: 600;
   letter-spacing: 0;
@@ -567,7 +569,7 @@
 .mind-trace-conversation-history-copy p {
   margin: var(--size-4-2) 0 0;
   color: var(--text-muted);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   line-height: 1.75;
   white-space: pre-wrap;
 }
@@ -585,7 +587,7 @@
   border-radius: var(--radius-m);
   background: var(--mind-trace-form-surface);
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   line-height: 1.75;
   overflow: hidden;
   resize: none;
@@ -691,7 +693,7 @@
   display: flex;
   align-items: baseline;
   color: var(--text-accent);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -726,7 +728,7 @@
   border-radius: calc(var(--radius-m) + 2px);
   background: var(--background-primary);
   box-shadow: 0 18px 54px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 32%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 32%, transparent);
 }
 
 .mind-trace-writing-sheet > .mind-trace-progress,
@@ -763,7 +765,7 @@
   background: transparent;
   box-shadow: none;
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1em;
   line-height: 1.85;
   overflow: hidden;
@@ -970,7 +972,7 @@
   border-radius: 50%;
   background: var(--mind-trace-checkin-color);
   box-shadow: 0 1px 4px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 40%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 40%, transparent);
   transform: translateY(-50%);
   transition: left 160ms ease;
 }
@@ -1074,7 +1076,7 @@
 
 .mind-trace-section-kicker {
   color: var(--text-muted);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
   letter-spacing: 0.12em;
@@ -1208,7 +1210,7 @@
 .mind-trace-rating-comparison-title {
   margin-top: var(--size-2-2);
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: clamp(1.25em, 2.5vw, 1.55em);
   font-weight: 650;
   letter-spacing: 0;
@@ -1352,7 +1354,7 @@
   min-height: 3.2em;
   margin: var(--size-4-3) 0 0;
   color: var(--text-muted);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   line-height: 1.6;
 }
@@ -1409,7 +1411,7 @@
     var(--mind-trace-hairline)
   );
   box-shadow: 0 10px 30px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 45%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 45%, transparent);
 }
 
 .mind-trace-diary-card {
@@ -1423,7 +1425,7 @@
   border-radius: 2px 2px calc(var(--radius-m) + 3px)
     calc(var(--radius-m) + 3px);
   box-shadow: 0 14px 40px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 28%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 28%, transparent);
 }
 
 .mind-trace-diary-card::after {
@@ -1443,7 +1445,7 @@
 .mind-trace-diary-card:focus-within {
   border-color: var(--interactive-accent);
   box-shadow: 0 18px 48px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 38%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 38%, transparent);
 }
 
 .mind-trace-diary-heading {
@@ -1454,14 +1456,14 @@
 .mind-trace-diary-kicker {
   margin-bottom: var(--size-2-2);
   color: var(--text-accent);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 0.68em;
   font-weight: var(--font-semibold);
   letter-spacing: 0.14em;
 }
 
 .mind-trace-diary-title {
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: clamp(1.3em, 2.8vw, 1.65em);
   font-weight: 650;
 }
@@ -1474,7 +1476,7 @@
   gap: var(--size-2-1);
   padding-right: var(--size-4-5);
   color: var(--text-faint);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
 }
 
@@ -1517,7 +1519,7 @@
   border-radius: 2px 2px var(--radius-m) var(--radius-m);
   background: var(--background-primary);
   box-shadow: 0 6px 20px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 18%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 18%, transparent);
   transition:
     box-shadow 140ms ease,
     transform 140ms ease;
@@ -1541,7 +1543,7 @@
 
 .mind-trace-facet-card:focus-within {
   box-shadow: 0 10px 28px
-    color-mix(in srgb, var(--background-modifier-box-shadow) 30%, transparent);
+    color-mix(in srgb, var(--mind-trace-shadow-color) 30%, transparent);
   transform: translateY(-2px);
 }
 
@@ -1585,7 +1587,7 @@
 .mind-trace-facet-category {
   margin-bottom: var(--size-4-2);
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.14em;
   font-weight: 650;
 }
@@ -1623,7 +1625,7 @@ input.mind-trace-facet-category:focus {
   min-height: 3.6em;
   overflow: hidden;
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   line-height: 1.7;
   resize: none;
@@ -1683,7 +1685,7 @@ input.mind-trace-facet-category:focus {
 
 .mind-trace-diary-editor {
   min-height: 11em;
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.05em;
   line-height: 1.85;
 }
@@ -1730,7 +1732,7 @@ input.mind-trace-facet-category:focus {
   border-radius: 999px;
   background: var(--mind-trace-soft-accent);
   color: var(--text-accent);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
   text-align: center;
@@ -1739,7 +1741,7 @@ input.mind-trace-facet-category:focus {
 
 .mind-trace-insight-editor {
   min-height: 4.8em;
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1em;
 }
 
@@ -1799,7 +1801,7 @@ input.mind-trace-facet-category:focus {
 }
 
 .mind-trace-question-card .mind-trace-compact-editor {
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.02em;
   font-style: italic;
 }
@@ -2117,7 +2119,7 @@ input.mind-trace-facet-category:focus {
 
 .mind-trace-saved-copy {
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   line-height: 1.8;
   white-space: pre-wrap;
 }
@@ -2434,7 +2436,7 @@ input.mind-trace-facet-category:focus {
 .mind-trace-chart-title {
   margin: 0;
   color: var(--text-accent);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
   letter-spacing: 0.14em;
@@ -2637,7 +2639,7 @@ input.mind-trace-facet-category:focus {
 .mind-trace-warning {
   padding: var(--size-4-3);
   border-radius: var(--radius-s);
-  background: rgba(var(--background-modifier-error-rgb), 0.15);
+  background: color-mix(in srgb, var(--background-modifier-error) 15%, transparent);
   color: var(--text-error);
   font-size: var(--font-smallest);
 }
@@ -2746,7 +2748,7 @@ input.mind-trace-facet-category:focus {
   border: 1px solid color-mix(in srgb, var(--mind-trace-ink-blue) 58%, var(--mind-trace-hairline));
   border-radius: calc(var(--radius-l) + 2px);
   background: var(--background-primary);
-  box-shadow: 0 24px 70px color-mix(in srgb, var(--background-modifier-cover) 58%, transparent);
+  box-shadow: 0 24px 70px color-mix(in srgb, var(--mind-trace-cover) 58%, transparent);
 }
 
 .mind-trace-password-modal {
@@ -2868,7 +2870,7 @@ input.mind-trace-facet-category:focus {
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -2905,7 +2907,7 @@ input.mind-trace-facet-category:focus {
 
 .mind-trace-observation-growth-title {
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-weight: 650;
   line-height: 1.4;
 }
@@ -2969,7 +2971,7 @@ input.mind-trace-facet-category:focus {
 
 .mind-trace-observation-dashboard-eyebrow {
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -3004,7 +3006,7 @@ input.mind-trace-facet-category:focus {
 .mind-trace-observation-dashboard-summary {
   min-width: 0;
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   line-height: 1.55;
 }
 
@@ -3013,7 +3015,7 @@ input.mind-trace-facet-category:focus {
   flex-wrap: wrap;
   gap: 4px 12px;
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -3236,7 +3238,7 @@ input.mind-trace-facet-category:focus {
 .mind-trace-event-title-input {
   padding: 0;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.12em;
   font-weight: var(--font-semibold);
 }
@@ -3424,7 +3426,7 @@ input.mind-trace-facet-category:focus {
 .mind-trace-event-node text,
 .mind-trace-element-node text {
   fill: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 12px;
 }
 
@@ -3528,7 +3530,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-event-status,
 .mind-trace-event-ledger-status {
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -3697,7 +3699,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-weekly-element-node text {
   fill: var(--text-muted);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 12px;
 }
 
@@ -3752,7 +3754,7 @@ button.mind-trace-event-ledger-title:hover {
   height: 100%;
   cursor: grab;
   outline: none;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
 }
 
@@ -3786,7 +3788,7 @@ button.mind-trace-event-ledger-title:hover {
   border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
 }
 
@@ -3833,7 +3835,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-memory-inspector h3 {
   margin: var(--size-2-2) 0 var(--size-4-3);
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 20px;
   line-height: 1.35;
 }
@@ -3973,7 +3975,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-memory-role-label,
 .mind-trace-memory-relation-label {
   fill: var(--text-faint);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 9px;
   opacity: 0;
   paint-order: stroke;
@@ -4023,7 +4025,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-memory-event-title {
   fill: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 11px;
   font-weight: 650;
 }
@@ -4062,14 +4064,14 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-memory-entity-glyph {
   fill: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 10px;
   font-weight: 750;
 }
 
 .mind-trace-memory-entity-label {
   fill: var(--text-muted);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 10px;
   paint-order: stroke;
   stroke: var(--background-primary);
@@ -4177,7 +4179,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-event-ledger-disclosure-title {
   overflow: hidden;
   color: currentColor;
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   font-weight: var(--font-semibold);
   text-overflow: ellipsis;
@@ -4239,7 +4241,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-observation-page .mind-trace-page-title,
 .mind-trace-observation-summary {
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
 }
 
 .mind-trace-observation-hero {
@@ -4272,7 +4274,7 @@ button.mind-trace-event-ledger-title:hover {
   flex-wrap: wrap;
   gap: 8px 18px;
   color: var(--text-muted);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
   letter-spacing: 0.01em;
 }
@@ -4298,7 +4300,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-observation-state-mark {
   color: var(--mind-trace-observation-tide);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4308,7 +4310,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-observation-section-title {
   margin-top: 8px;
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.25em;
   font-weight: 650;
 }
@@ -4331,7 +4333,7 @@ button.mind-trace-event-ledger-title:hover {
   gap: 12px;
   margin: 24px 0 0 34px;
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -4431,7 +4433,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-observation-perspective-name,
 .mind-trace-observation-role-label {
   color: var(--mind-trace-observation-graphite);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -4439,7 +4441,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-observation-layer,
 .mind-trace-observation-feedback-status {
   color: var(--text-muted);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -4457,7 +4459,7 @@ button.mind-trace-event-ledger-title:hover {
   gap: 5px 8px;
   margin-top: 12px;
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -4503,8 +4505,16 @@ button.mind-trace-event-ledger-title:hover {
   color: var(--mind-trace-observation-lichen);
 }
 
+.mind-trace-observation-feedback-status.is-partial {
+  color: var(--mind-trace-observation-amber);
+}
+
 .mind-trace-observation-feedback-status.is-rejected {
   color: var(--mind-trace-observation-coral);
+}
+
+.mind-trace-observation-feedback-status.is-uncertain {
+  color: var(--mind-trace-observation-tide);
 }
 
 .mind-trace-observation-feedback-status.is-pending {
@@ -4574,7 +4584,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-observation-hypothesis-label {
   color: var(--mind-trace-observation-amber);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -4595,7 +4605,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-observation-next-step {
   margin-top: 13px;
   color: var(--text-normal);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.15em;
   line-height: 1.6;
 }
@@ -4657,7 +4667,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-observation-source-generated {
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
 }
 
@@ -5021,7 +5031,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-home-title {
   margin: 0;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: clamp(2em, 4vw, 2.8em);
   font-weight: 650;
   letter-spacing: 0;
@@ -5098,7 +5108,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-home-section-title {
   margin: 0 0 var(--size-4-3);
   color: var(--text-accent);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
   letter-spacing: 0.14em;
@@ -5139,9 +5149,26 @@ button.mind-trace-event-ledger-title:hover {
   display: flex;
   align-items: center;
   gap: var(--size-4-2);
-  padding: var(--size-2-2) var(--size-4-2) var(--size-2-2) 0;
+  width: 100%;
+  padding-block: var(--size-2-2);
+  padding-inline: 0 var(--size-4-2);
+  border: 0;
   border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
   cursor: pointer;
+  font: inherit;
+  text-align: start;
+}
+
+button.mind-trace-streak-dot,
+button.mind-trace-cal-cell,
+button.mind-trace-heat-cell {
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+  font: inherit;
 }
 
 .mind-trace-home-row:hover {
@@ -5167,7 +5194,7 @@ button.mind-trace-event-ledger-title:hover {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  inset-inline-start: 50%;
   width: 1px;
   background: var(--mind-trace-hairline);
 }
@@ -5386,12 +5413,12 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-cal-day-4 {
   background: color-mix(in srgb, var(--mind-trace-mood) 68%, var(--background-primary));
-  color: var(--text-on-accent);
+  color: var(--mind-trace-heat-foreground);
 }
 
 .mind-trace-cal-day-5 {
   background: color-mix(in srgb, var(--mind-trace-mood) 88%, var(--background-primary));
-  color: var(--text-on-accent);
+  color: var(--mind-trace-heat-foreground);
 }
 
 .mind-trace-heatmap-nav {
@@ -5452,11 +5479,15 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-heatmap {
   display: grid;
+  grid-template-columns: var(--mind-trace-heat-grid-columns);
+  grid-template-rows: var(--mind-trace-heat-grid-rows);
   gap: 3px;
-  min-width: 0;
+  min-width: var(--mind-trace-heat-grid-width);
 }
 
 .mind-trace-heatmap-month {
+  grid-column: var(--mind-trace-heat-grid-column);
+  grid-row: var(--mind-trace-heat-grid-row);
   overflow: hidden;
   color: var(--text-faint);
   font-size: var(--font-smallest);
@@ -5466,6 +5497,8 @@ button.mind-trace-event-ledger-title:hover {
 }
 
 .mind-trace-heatmap-weekday {
+  grid-column: var(--mind-trace-heat-grid-column);
+  grid-row: var(--mind-trace-heat-grid-row);
   color: var(--text-faint);
   font-size: var(--font-smallest);
   line-height: 1;
@@ -5473,6 +5506,8 @@ button.mind-trace-event-ledger-title:hover {
 }
 
 .mind-trace-heat-cell {
+  grid-column: var(--mind-trace-heat-grid-column);
+  grid-row: var(--mind-trace-heat-grid-row);
   width: var(--mind-trace-heat-cell-size, 14px);
   min-width: var(--mind-trace-heat-cell-size, 14px);
   height: var(--mind-trace-heat-cell-size, 14px);
@@ -5531,7 +5566,7 @@ button.mind-trace-event-ledger-title:hover {
 /* Personal observatory */
 
 .mind-trace-home-title {
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-weight: 650;
   letter-spacing: -0.02em;
 }
@@ -5621,7 +5656,7 @@ button.mind-trace-event-ledger-title:hover {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: baseline;
-  gap: var(--size-2-2) var(--size-3-2);
+  gap: var(--size-2-2) var(--size-2-3);
   width: 100%;
   padding: var(--size-2-2) 0;
   border: 0;
@@ -5735,7 +5770,7 @@ button.mind-trace-event-ledger-title:hover {
   border-radius: 999px;
   background: color-mix(in srgb, var(--mind-trace-stress) 14%, transparent);
   color: var(--mind-trace-stress);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
 }
 
 .mind-trace-weekly-card-body {
@@ -5745,7 +5780,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-weekly-card-body p {
   margin: 0;
   color: var(--mind-trace-secondary-ink);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.03em;
   line-height: 1.78;
 }
@@ -5791,7 +5826,7 @@ button.mind-trace-event-ledger-title:hover {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--size-3-3);
+  gap: var(--size-4-2);
 }
 
 .mind-trace-formation-meta {
@@ -5831,7 +5866,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-formation-level {
   position: relative;
   height: 18px;
-  margin-top: var(--size-3-2);
+  margin-top: var(--size-2-3);
 }
 
 .mind-trace-formation-percent {
@@ -5941,7 +5976,7 @@ button.mind-trace-event-ledger-title:hover {
   align-items: center;
   gap: 2px;
   height: 18px;
-  margin-top: var(--size-3-2);
+  margin-top: var(--size-2-3);
 }
 
 .mind-trace-formation-seg-label {
@@ -6023,7 +6058,7 @@ button.mind-trace-event-ledger-title:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--size-4-2);
-  margin: var(--size-2-2) 0 var(--size-3-2);
+  margin: var(--size-2-2) 0 var(--size-2-3);
   color: var(--text-faint);
   font-size: var(--font-smallest);
 }
@@ -6074,7 +6109,7 @@ button.mind-trace-event-ledger-title:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--size-4-2);
-  margin-bottom: var(--size-3-2);
+  margin-bottom: var(--size-2-3);
 }
 
 .mind-trace-trend-mini-title-wrap {
@@ -6102,7 +6137,7 @@ button.mind-trace-event-ledger-title:hover {
 
 .mind-trace-trend-mini-title {
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   font-weight: var(--font-semibold);
   letter-spacing: 0.02em;
@@ -6175,7 +6210,7 @@ button.mind-trace-event-ledger-title:hover {
 }
 
 .mind-trace-saved-weekly-report {
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
 }
 
 .mind-trace-saved-weekly-report .mind-trace-weekly-shell {
@@ -6185,7 +6220,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-saved-weekly-report .mind-trace-weekly-header h1,
 .mind-trace-saved-weekly-report .mind-trace-card-title,
 .mind-trace-saved-weekly-report .mind-trace-rating-comparison-title {
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
 }
 
 .mind-trace-saved-weekly-report .mind-trace-weekly-header h1 {
@@ -6236,7 +6271,7 @@ button.mind-trace-event-ledger-title:hover {
   border-top: 1px solid color-mix(in srgb, var(--mind-trace-ink-blue) 78%, transparent);
   border-radius: 0;
   background: var(--background-primary);
-  box-shadow: 0 18px 48px color-mix(in srgb, var(--background-modifier-box-shadow) 28%, transparent);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--mind-trace-shadow-color) 28%, transparent);
 }
 
 .mind-trace-saved-weekly-report .mind-trace-weekly-fold::after {
@@ -6390,7 +6425,7 @@ button.mind-trace-event-ledger-title:hover {
   align-self: start;
   margin-top: 0.25em;
   color: var(--mind-trace-ink-blue);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
 }
@@ -6462,7 +6497,7 @@ button.mind-trace-event-ledger-title:hover {
   display: block;
   margin-bottom: var(--size-4-2);
   color: var(--text-faint);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-smallest);
   font-weight: var(--font-semibold);
   letter-spacing: 0.08em;
@@ -6524,7 +6559,7 @@ button.mind-trace-event-ledger-title:hover {
 .mind-trace-saved-weekly-report .mind-trace-weekly-action-reason {
   margin: var(--size-4-3) 0 0;
   color: var(--text-muted);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   line-height: 1.7;
 }
@@ -6689,7 +6724,7 @@ button.mind-trace-event-ledger-title:hover {
   margin: var(--size-2-3) 0 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   line-height: 1.65;
   -webkit-box-orient: vertical;
@@ -6981,7 +7016,7 @@ button.mind-trace-history-result-open {
 .mind-trace-history-result-excerpt {
   margin: var(--size-2-2) 0 0;
   color: var(--text-muted);
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   line-height: 1.7;
 }
@@ -7243,7 +7278,7 @@ button.mind-trace-theme-filter-button:hover {
   box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   font-weight: var(--font-medium);
   white-space: nowrap;
@@ -7311,7 +7346,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-page-title {
   margin: 0;
   color: var(--mind-trace-ink);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: clamp(1.9em, 4vw, 2.8em);
   font-weight: 650;
   letter-spacing: -0.02em;
@@ -7360,7 +7395,7 @@ button.mind-trace-theme-filter-button:hover {
   background: transparent;
   box-shadow: none;
   color: var(--text-muted);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
 }
 
@@ -7415,7 +7450,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-trajectory-ruler-value {
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-ui-medium);
   font-variant-numeric: tabular-nums;
   font-weight: var(--font-semibold);
@@ -7619,7 +7654,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-trajectory-results-heading small {
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
   font-variant-numeric: tabular-nums;
 }
@@ -7636,7 +7671,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-trajectory-month-label {
   margin: 0 0 10px 92px;
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-small);
   font-variant-numeric: tabular-nums;
   font-weight: var(--font-semibold);
@@ -7665,7 +7700,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-trajectory-day-label {
   margin: 0 0 8px;
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
   font-variant-numeric: tabular-nums;
 }
@@ -7684,19 +7719,47 @@ button.mind-trace-theme-filter-button:hover {
   transition: border-color 180ms ease, background-color 180ms ease;
 }
 
+.mind-trace-trajectory-event-open {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mind-trace-view button.mind-trace-trajectory-event-open,
+.mind-trace-view button.mind-trace-trajectory-event-open:hover,
+.mind-trace-view button.mind-trace-trajectory-event-open:active {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .mind-trace-trajectory-event-card:hover,
-.mind-trace-trajectory-event-card:focus-visible {
+.mind-trace-trajectory-event-card:focus-within {
   border-color: var(--mind-trace-hairline);
   background: color-mix(in srgb, var(--background-secondary) 46%, transparent);
   outline: none;
 }
 
-.mind-trace-trajectory-event-card:focus-visible {
+.mind-trace-trajectory-event-card:focus-within {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
 }
 
+.mind-trace-trajectory-event-open:focus-visible {
+  outline: none;
+}
+
 .mind-trace-trajectory-event-marker {
-  z-index: 1;
+  position: relative;
+  z-index: 2;
   display: grid;
   width: 52px;
   min-height: 30px;
@@ -7707,13 +7770,17 @@ button.mind-trace-theme-filter-button:hover {
   border-radius: 999px;
   background: var(--background-primary);
   color: var(--mind-trace-ink-blue);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 .mind-trace-trajectory-event-body {
+  position: relative;
+  z-index: 2;
   min-width: 0;
+  pointer-events: none;
 }
 
 .mind-trace-trajectory-event-meta {
@@ -7722,14 +7789,14 @@ button.mind-trace-theme-filter-button:hover {
   flex-wrap: wrap;
   gap: 6px 10px;
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: var(--font-smallest);
   font-variant-numeric: tabular-nums;
 }
 
 .mind-trace-trajectory-event-type {
   color: var(--mind-trace-ink-blue);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-weight: var(--font-semibold);
 }
 
@@ -7746,7 +7813,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-trajectory-event-title {
   margin-top: 4px;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-ui-medium);
   font-weight: var(--font-semibold);
   line-height: 1.45;
@@ -7755,7 +7822,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-trajectory-event-summary {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: var(--font-small);
   line-height: 1.65;
 }
@@ -7937,7 +8004,7 @@ button.mind-trace-theme-filter-button:hover {
   border: 1px solid color-mix(in srgb, var(--mind-trace-ink-blue) 58%, var(--mind-trace-hairline));
   border-radius: calc(var(--radius-l) + 2px);
   background: var(--background-primary);
-  box-shadow: 0 18px 52px color-mix(in srgb, var(--background-modifier-cover) 58%, transparent);
+  box-shadow: 0 18px 52px color-mix(in srgb, var(--mind-trace-cover) 58%, transparent);
 }
 
 @keyframes mind-trace-dialog-in {
@@ -7966,7 +8033,7 @@ button.mind-trace-theme-filter-button:hover {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background: var(--background-modifier-cover);
+  background: var(--mind-trace-cover);
   content: "";
 }
 
@@ -7981,7 +8048,7 @@ button.mind-trace-theme-filter-button:hover {
   border: 1px solid color-mix(in srgb, var(--mind-trace-ink-blue) 58%, var(--mind-trace-hairline));
   border-radius: calc(var(--radius-l) + 2px);
   background: var(--background-primary);
-  box-shadow: 0 14px 38px color-mix(in srgb, var(--background-modifier-cover) 58%, transparent);
+  box-shadow: 0 14px 38px color-mix(in srgb, var(--mind-trace-cover) 58%, transparent);
   color: var(--text-normal);
 }
 
@@ -8036,7 +8103,7 @@ button.mind-trace-theme-filter-button:hover {
   border: 1px solid color-mix(in srgb, var(--mind-trace-ink-blue) 58%, var(--mind-trace-hairline));
   border-radius: calc(var(--radius-l) + 2px);
   background: var(--background-primary);
-  box-shadow: 0 24px 70px color-mix(in srgb, var(--background-modifier-cover) 58%, transparent);
+  box-shadow: 0 24px 70px color-mix(in srgb, var(--mind-trace-cover) 58%, transparent);
 }
 
 .mind-trace-confirm-modal {
@@ -8047,7 +8114,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-dialog-title {
   margin: 0 0 12px;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--mind-trace-body-font);
   font-size: 1.25em;
   font-weight: 650;
   letter-spacing: -0.02em;
@@ -8165,7 +8232,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-monthly-rhythm-label {
   color: var(--text-muted);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 0.72rem;
   letter-spacing: 0.02em;
 }
@@ -8327,13 +8394,39 @@ button.mind-trace-theme-filter-button:hover {
   width: 100%;
   min-height: 56px;
   padding: 0 max(16px, calc((100% - 1180px) / 2));
-  border-bottom: 1px solid var(--mind-trace-keyline);
-  background: color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary));
+  border-bottom: 0;
+  background: transparent;
   box-shadow: none;
+  isolation: isolate;
+}
+
+.mind-trace-view .mind-trace-nav::before {
+  position: absolute;
+  z-index: 0;
+  inset-block: -32px 0;
+  inset-inline: -32px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--background-primary) 84%, transparent),
+    color-mix(in srgb, var(--background-primary) 88%, transparent)
+  );
+  box-shadow:
+    inset 0 -1px 0 var(--mind-trace-keyline),
+    0 12px 28px -26px color-mix(in srgb, var(--mind-trace-shadow-color) 72%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.12);
+  backdrop-filter: blur(22px) saturate(1.12);
+  content: "";
+  pointer-events: none;
 }
 
 .mind-trace-view .mind-trace-nav::after {
   display: none;
+}
+
+.mind-trace-view .mind-trace-nav-brand,
+.mind-trace-view .mind-trace-nav-items {
+  position: relative;
+  z-index: 1;
 }
 
 .mind-trace-nav-brand {
@@ -8447,7 +8540,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-nav-item.is-record.is-active {
   border: 1px solid var(--mind-trace-role-record);
   background: var(--mind-trace-role-record);
-  color: var(--text-on-accent);
+  color: var(--mind-trace-role-foreground);
   box-shadow: none;
 }
 
@@ -8521,7 +8614,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-home-date-value {
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: clamp(18px, 2.3vw, 25px);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -8558,7 +8651,7 @@ button.mind-trace-theme-filter-button:hover {
   border-radius: var(--mind-trace-radius-control);
   background: var(--mind-trace-role-record);
   box-shadow: none;
-  color: var(--text-on-accent);
+  color: var(--mind-trace-role-foreground);
   font-weight: 650;
 }
 
@@ -8634,7 +8727,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-home-state-source {
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -8725,7 +8818,7 @@ button.mind-trace-theme-filter-button:hover {
 }
 
 .mind-trace-home-state-value strong {
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -8879,14 +8972,14 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-trend-mini-stat strong {
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
 .mind-trace-view .mind-trace-trend-mini-delta {
   color: var(--text-muted);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
 }
 
@@ -8933,7 +9026,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-axis-label {
   fill: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
 }
@@ -8966,7 +9059,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-event-row:last-child { border-bottom: 0; }
 .mind-trace-view .mind-trace-event-row:hover { background: color-mix(in srgb, var(--mind-trace-role-trajectory) 6%, transparent); }
-.mind-trace-view .mind-trace-event-meta { color: var(--text-faint); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mind-trace-view .mind-trace-event-meta { color: var(--text-faint); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mind-trace-view .mind-trace-event-type { color: var(--mind-trace-role-trajectory); font-size: 13px; white-space: nowrap; }
 .mind-trace-view .mind-trace-event-title { overflow: hidden; color: var(--text-normal); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .mind-trace-view .mind-trace-event-row::after { content: none; }
@@ -9039,7 +9132,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-period-label,
 .mind-trace-view .mind-trace-observation-dashboard-eyebrow {
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -9092,7 +9185,7 @@ button.mind-trace-theme-filter-button:hover {
   gap: 7px 12px;
   margin-top: 9px;
   color: var(--text-faint);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -9215,7 +9308,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-formation-block.is-monthly { border-top-color: color-mix(in srgb, var(--mind-trace-role-record) 34%, var(--mind-trace-role-observation)); }
 .mind-trace-view .mind-trace-formation-kicker { color: var(--text-normal); font-size: 13px; font-weight: 650; letter-spacing: 0; }
 .mind-trace-view .mind-trace-formation-period,
-.mind-trace-view .mind-trace-formation-count { color: var(--text-faint); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-formation-count { color: var(--text-faint); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-formation-track,
 .mind-trace-view .mind-trace-formation-segments { min-height: 12px; height: 12px; border-radius: 3px; background: color-mix(in srgb, var(--text-muted) 18%, var(--background-primary)); }
 .mind-trace-view .mind-trace-formation-fill,
@@ -9268,7 +9361,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-report-tab.is-active {
   background: var(--mind-trace-role-record);
-  color: var(--text-on-accent);
+  color: var(--mind-trace-role-foreground);
   box-shadow: none;
 }
 
@@ -9298,10 +9391,10 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-trajectory-tab { min-height: 31px; padding: 5px 13px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 13px; }
 .mind-trace-view .mind-trace-trajectory-tab.is-active { background: color-mix(in srgb, var(--mind-trace-role-trajectory) 18%, var(--background-primary)); color: var(--mind-trace-role-trajectory); }
 .mind-trace-view .mind-trace-trajectory-ruler { display: flex; flex-wrap: wrap; margin-bottom: 17px; padding: 9px 0; border-top: 1px solid var(--mind-trace-keyline); border-bottom: 1px solid var(--mind-trace-keyline); }
-.mind-trace-view .mind-trace-trajectory-ruler-item { flex: 1 1 150px; min-width: 0; padding: 3px 14px; border-left: 1px solid var(--mind-trace-keyline); }
-.mind-trace-view .mind-trace-trajectory-ruler-item:first-child { padding-left: 0; border-left: 0; }
+.mind-trace-view .mind-trace-trajectory-ruler-item { flex: 1 1 150px; min-width: 0; padding: 3px 14px; border-inline-start: 1px solid var(--mind-trace-keyline); }
+.mind-trace-view .mind-trace-trajectory-ruler-item:first-child { padding-inline-start: 0; border-inline-start: 0; }
 .mind-trace-view .mind-trace-trajectory-ruler-label { display: block; color: var(--text-faint); font-size: 12px; }
-.mind-trace-view .mind-trace-trajectory-ruler-value { display: block; margin-top: 3px; color: var(--mind-trace-role-trajectory); font-family: var(--font-monospace); font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; }
+.mind-trace-view .mind-trace-trajectory-ruler-value { display: block; margin-top: 3px; color: var(--mind-trace-role-trajectory); font-family: var(--mind-trace-mono-font); font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; }
 .mind-trace-view .mind-trace-trajectory-layout { display: grid; grid-template-columns: minmax(220px, 0.32fr) minmax(0, 0.68fr); gap: 22px; align-items: start; }
 .mind-trace-view .mind-trace-trajectory-controls { padding: 13px 14px; border: 1px solid var(--mind-trace-keyline); border-radius: var(--mind-trace-radius-panel); background: var(--background-primary); }
 .mind-trace-view .mind-trace-trajectory-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 10px; }
@@ -9337,17 +9430,17 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-trajectory-results-count {
   flex: 0 0 auto;
   color: var(--mind-trace-role-trajectory);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.mind-trace-view .mind-trace-trajectory-month-label { margin-left: 94px; color: var(--text-normal); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
-.mind-trace-view .mind-trace-trajectory-ribbon { left: 54px; width: 2px; background: color-mix(in srgb, var(--mind-trace-role-trajectory) 70%, var(--mind-trace-keyline)); }
-.mind-trace-view .mind-trace-trajectory-event-card { grid-template-columns: 78px minmax(0, 1fr); column-gap: 16px; margin-bottom: 7px; padding: 9px 9px 10px 0; border: 0; border-bottom: 1px solid var(--mind-trace-keyline); border-radius: 0; background: transparent; }
+.mind-trace-view .mind-trace-trajectory-month-label { margin-inline-start: 94px; color: var(--text-normal); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-trajectory-ribbon { inset-inline-start: 54px; width: 2px; background: color-mix(in srgb, var(--mind-trace-role-trajectory) 70%, var(--mind-trace-keyline)); }
+.mind-trace-view .mind-trace-trajectory-event-card { grid-template-columns: 78px minmax(0, 1fr); column-gap: 16px; margin-bottom: 7px; padding-block: 9px 10px; padding-inline: 0 9px; border: 0; border-bottom: 1px solid var(--mind-trace-keyline); border-radius: 0; background: transparent; }
 .mind-trace-view .mind-trace-trajectory-event-card:hover,
-.mind-trace-view .mind-trace-trajectory-event-card:focus-visible { border-color: var(--mind-trace-keyline); background: color-mix(in srgb, var(--mind-trace-role-trajectory) 5%, transparent); box-shadow: none; outline: none; }
-.mind-trace-view .mind-trace-trajectory-event-marker { width: 48px; min-height: 28px; margin-left: 30px; border: 1px solid var(--mind-trace-role-trajectory); border-radius: 5px; background: var(--background-primary); color: var(--mind-trace-role-trajectory); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-trajectory-event-card:focus-within { border-color: var(--mind-trace-keyline); background: color-mix(in srgb, var(--mind-trace-role-trajectory) 5%, transparent); box-shadow: none; }
+.mind-trace-view .mind-trace-trajectory-event-marker { width: 48px; min-height: 28px; margin-inline-start: 30px; border: 1px solid var(--mind-trace-role-trajectory); border-radius: 5px; background: var(--background-primary); color: var(--mind-trace-role-trajectory); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-trajectory-event-meta { color: var(--mind-trace-readable-meta); font-size: 12px; }
 .mind-trace-view .mind-trace-trajectory-event-type { color: var(--mind-trace-role-trajectory); font-size: 13px; }
 .mind-trace-view .mind-trace-trajectory-event-title { margin-top: 4px; color: var(--text-normal); font-size: 14px; font-weight: 650; line-height: 1.4; }
@@ -9397,7 +9490,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-entry-date input,
 .mind-trace-view .mind-trace-entry-date strong {
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -9448,7 +9541,7 @@ button.mind-trace-theme-filter-button:hover {
 }
 .mind-trace-view .mind-trace-checkin-strip-thumb { width: 14px; height: 14px; border: 2px solid var(--background-primary); background: var(--mind-trace-checkin-color); box-shadow: 0 0 0 1px var(--mind-trace-checkin-color); }
 .mind-trace-view .mind-trace-checkin-scale button { min-height: 36px; border: 1px solid var(--mind-trace-keyline); border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 13px; }
-.mind-trace-view .mind-trace-checkin-scale button.is-selected { border-color: var(--mind-trace-checkin-color); background: var(--mind-trace-checkin-color); color: var(--text-on-accent); }
+.mind-trace-view .mind-trace-checkin-scale button.is-selected { border-color: var(--mind-trace-checkin-color); background: var(--mind-trace-checkin-color); color: var(--mind-trace-role-foreground); }
 .mind-trace-view .mind-trace-checkin-anchors { color: var(--mind-trace-readable-meta); font-size: 12px; }
 .mind-trace-view .mind-trace-checkin-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; }
 .mind-trace-view .mind-trace-checkin-summary { margin: 0; color: var(--mind-trace-readable-meta); font-size: 14px; }
@@ -9474,10 +9567,10 @@ button.mind-trace-theme-filter-button:hover {
   box-shadow: none;
 }
 
-.mind-trace-view .mind-trace-writing-sheet > .mind-trace-progress { padding: 15px 18px 0; color: var(--mind-trace-role-record); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-writing-sheet > .mind-trace-progress { padding: 15px 18px 0; color: var(--mind-trace-role-record); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-writing-sheet > .mind-trace-question { padding: 12px 18px 0; color: var(--text-normal); font-size: 20px; font-weight: 650; line-height: 1.42; }
 .mind-trace-view .mind-trace-writing-sheet > .mind-trace-question-hint { padding: 0 18px; color: var(--mind-trace-readable-meta); font-size: 14px; line-height: 1.55; }
-.mind-trace-view .mind-trace-question-editor { min-height: 180px; margin: 8px 18px 0; width: calc(100% - 36px); padding: 13px 0; border: 0; border-top: 1px solid var(--mind-trace-keyline); border-radius: 0; background: transparent; color: var(--text-normal); font-family: var(--font-text); font-size: 15px; line-height: 1.8; resize: vertical; }
+.mind-trace-view .mind-trace-question-editor { min-height: 180px; margin: 8px 18px 0; width: calc(100% - 36px); padding: 13px 0; border: 0; border-top: 1px solid var(--mind-trace-keyline); border-radius: 0; background: transparent; color: var(--text-normal); font-family: var(--mind-trace-body-font); font-size: 15px; line-height: 1.8; resize: vertical; }
 .mind-trace-view .mind-trace-question-editor:focus { border-color: var(--mind-trace-role-record); box-shadow: none; outline: none; }
 .mind-trace-view .mind-trace-question-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 18px 15px; border-top: 1px solid var(--mind-trace-keyline); }
 .mind-trace-view .mind-trace-question-footer > span { color: var(--mind-trace-readable-meta); font-size: 13px; }
@@ -9498,7 +9591,7 @@ button.mind-trace-theme-filter-button:hover {
 }
 .mind-trace-view .mind-trace-observation-hero::before,
 .mind-trace-view .mind-trace-observation-hero::after { display: none; }
-.mind-trace-view .mind-trace-observation-meta { display: flex; flex-wrap: wrap; gap: 6px 13px; color: var(--mind-trace-readable-meta); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-meta { display: flex; flex-wrap: wrap; gap: 6px 13px; color: var(--mind-trace-readable-meta); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-summary { max-width: 58em; margin: 12px 0 0; color: var(--text-normal); font-size: 18px; font-weight: 650; line-height: 1.45; }
 .mind-trace-view .mind-trace-observation-actions { margin-top: 13px; }
 .mind-trace-view .mind-trace-observation-growth { margin: 0 0 23px; padding-bottom: 17px; border-bottom: 1px solid var(--mind-trace-keyline); }
@@ -9509,7 +9602,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-observation-growth-card + .mind-trace-observation-growth-card { border-left: 1px solid var(--mind-trace-keyline); }
 .mind-trace-view .mind-trace-observation-growth-card.is-current { background: color-mix(in srgb, var(--mind-trace-role-observation) 8%, transparent); }
 .mind-trace-view .mind-trace-observation-growth-card.is-locked { opacity: 0.64; }
-.mind-trace-view .mind-trace-observation-growth-mark { display: inline-flex; min-width: 44px; color: var(--mind-trace-role-observation); font-family: var(--font-monospace); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-growth-mark { display: inline-flex; min-width: 44px; color: var(--mind-trace-role-observation); font-family: var(--mind-trace-mono-font); font-size: 11px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-growth-card.is-locked .mind-trace-observation-growth-mark { color: var(--text-faint); }
 .mind-trace-view .mind-trace-observation-growth-label { color: var(--text-normal); font-size: 12px; font-weight: 650; }
 .mind-trace-view .mind-trace-observation-growth-title { margin-top: 8px; color: var(--text-normal); font-size: 13px; font-weight: 600; line-height: 1.45; }
@@ -9517,7 +9610,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-observation-growth-requirement { margin-top: 4px; color: var(--text-muted); font-size: 11px; line-height: 1.55; }
 .mind-trace-view .mind-trace-observation-trace { margin: 0 0 24px; }
 .mind-trace-view .mind-trace-observation-stages { display: flex; gap: 0; margin: 12px 0 0 26px; border-bottom: 1px solid var(--mind-trace-keyline); }
-.mind-trace-view .mind-trace-observation-stages span { flex: 1; padding: 0 0 6px; color: var(--mind-trace-role-observation); font-family: var(--font-monospace); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-stages span { flex: 1; padding: 0 0 6px; color: var(--mind-trace-role-observation); font-family: var(--mind-trace-mono-font); font-size: 11px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-stages span:nth-child(2) { color: color-mix(in srgb, var(--mind-trace-role-observation) 80%, var(--mind-trace-role-trajectory)); }
 .mind-trace-view .mind-trace-observation-stages span:nth-child(3) { color: var(--text-normal); }
 .mind-trace-view .mind-trace-observation-trace-list { margin-top: 0; padding-top: 0; }
@@ -9542,13 +9635,13 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-observation-role-label { color: var(--text-normal); font-size: 14px; font-weight: 650; }
 .mind-trace-view .mind-trace-observation-signal,
 .mind-trace-view .mind-trace-observation-layer,
-.mind-trace-view .mind-trace-observation-feedback-status { color: var(--mind-trace-role-observation); font-family: var(--font-monospace); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-feedback-status { color: var(--mind-trace-role-observation); font-family: var(--mind-trace-mono-font); font-size: 11px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-change-copy,
 .mind-trace-view .mind-trace-observation-item-copy { margin-top: 3px; color: var(--text-normal); font-size: 13px; line-height: 1.6; }
 .mind-trace-view .mind-trace-observation-evidence { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 7px; }
-.mind-trace-view .mind-trace-observation-evidence-label { color: var(--mind-trace-readable-meta); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-evidence-label { color: var(--mind-trace-readable-meta); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-evidence button,
-.mind-trace-view .mind-trace-observation-evidence time { padding: 1px 4px; border: 1px solid var(--mind-trace-keyline); border-radius: 4px; background: transparent; color: var(--mind-trace-role-trajectory); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-evidence time { padding: 1px 4px; border: 1px solid var(--mind-trace-keyline); border-radius: 4px; background: transparent; color: var(--mind-trace-role-trajectory); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-calibrate { min-height: 30px; padding: 3px 7px; border: 1px solid var(--mind-trace-keyline); border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 13px; }
 .mind-trace-view .mind-trace-observation-perspective .mind-trace-observation-calibrate,
 .mind-trace-view .mind-trace-observation-hypothesis .mind-trace-observation-calibrate {
@@ -9584,7 +9677,7 @@ button.mind-trace-theme-filter-button:hover {
 }
 .mind-trace-view .mind-trace-observation-hypothesis { position: relative; margin: 0; padding: 16px 14px; border: 0; border-bottom: 1px solid var(--mind-trace-keyline); border-inline-start: 2px solid color-mix(in srgb, var(--mind-trace-role-observation) 65%, var(--mind-trace-keyline)); background: transparent; }
 .mind-trace-view .mind-trace-observation-hypothesis:first-of-type { border-top: 1px solid var(--mind-trace-keyline); }
-.mind-trace-view .mind-trace-observation-hypothesis-label { color: var(--mind-trace-role-observation); font-family: var(--font-monospace); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-hypothesis-label { color: var(--mind-trace-role-observation); font-family: var(--mind-trace-mono-font); font-size: 11px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-observation-closing { margin-top: 22px; padding-top: 15px; border-top: 1px solid var(--mind-trace-keyline); }
 .mind-trace-view .mind-trace-observation-next-step { max-width: 58em; margin-top: 7px; color: var(--text-normal); font-size: 15px; line-height: 1.6; }
 .mind-trace-view .mind-trace-observation-self-question { margin-top: 8px; color: var(--mind-trace-role-observation); font-size: 14px; line-height: 1.55; }
@@ -9624,7 +9717,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-saved-session { margin: 0; padding: 18px 0; border-top: 1px solid var(--mind-trace-keyline); }
 .mind-trace-view .mind-trace-saved-session:first-of-type { border-top: 0; }
 .mind-trace-view .mind-trace-saved-session-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
-.mind-trace-view .mind-trace-saved-session-heading time { color: var(--mind-trace-readable-meta); font-family: var(--font-monospace); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-saved-session-heading time { color: var(--mind-trace-readable-meta); font-family: var(--mind-trace-mono-font); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-saved-diary { max-width: 68ch; padding-left: 14px; border-left: 1px solid var(--mind-trace-role-record); color: var(--text-normal); line-height: 1.82; }
 .mind-trace-view .mind-trace-rating-comparison.mind-trace-saved-ratings {
   display: block;
@@ -9697,9 +9790,10 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-settings .mind-trace-settings-title { margin: 0; color: var(--text-normal); font-size: 25px; font-weight: 650; letter-spacing: -0.025em; line-height: 1.2; }
 .mind-trace-settings .mind-trace-settings-header p { margin: 7px 0 0; color: var(--mind-trace-readable-meta); font-size: 14px; line-height: 1.6; }
 .mind-trace-settings .mind-trace-settings-section { margin: 0 0 23px; padding: 0; border: 0; background: transparent; }
-.mind-trace-settings .mind-trace-settings-section-heading { margin: 0 0 8px; }
-.mind-trace-settings .mind-trace-settings-section-title { margin: 0; color: var(--text-normal); font-size: 15px; font-weight: 650; }
-.mind-trace-settings .mind-trace-settings-section-heading p { margin: 4px 0 0; color: var(--mind-trace-readable-meta); font-size: 14px; line-height: 1.5; }
+.mind-trace-settings .mind-trace-settings-section-heading { display: block; margin: 0 0 8px; padding: 0; border: 0; }
+.mind-trace-settings .mind-trace-settings-section-heading .setting-item-info { width: 100%; }
+.mind-trace-settings .mind-trace-settings-section-heading .setting-item-name { color: var(--text-normal); font-size: 15px; font-weight: 650; }
+.mind-trace-settings .mind-trace-settings-section-heading .setting-item-description { margin: 4px 0 0; color: var(--mind-trace-readable-meta); font-size: 14px; line-height: 1.5; }
 .mind-trace-settings .mind-trace-settings-section .setting-item { grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 18px; padding: 12px 0; border-color: var(--mind-trace-keyline); }
 .mind-trace-settings .mind-trace-settings-section .setting-item-name { color: var(--text-normal); font-size: 13px; font-weight: 600; }
 .mind-trace-settings .mind-trace-settings-section .setting-item-description { margin-top: 3px; color: var(--mind-trace-readable-meta); font-size: 14px; line-height: 1.5; }
@@ -9722,7 +9816,7 @@ button.mind-trace-theme-filter-button:hover {
 }
 
 .mind-trace-view .mind-trace-empty-mark,
-.mind-trace-view .mind-trace-observation-state-mark { color: var(--mind-trace-role-record); font-family: var(--font-monospace); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mind-trace-view .mind-trace-observation-state-mark { color: var(--mind-trace-role-record); font-family: var(--mind-trace-mono-font); font-size: 11px; font-variant-numeric: tabular-nums; }
 .mind-trace-view .mind-trace-empty-title,
 .mind-trace-view .mind-trace-observation-state-title { margin-top: 5px; color: var(--text-normal); font-size: 15px; font-weight: 650; }
 .mind-trace-view .mind-trace-empty-state p,
@@ -9768,18 +9862,19 @@ button.mind-trace-theme-filter-button:hover {
   border: 1px solid var(--mind-trace-keyline-strong);
   border-radius: var(--mind-trace-radius-panel);
   background: var(--background-primary);
-  box-shadow: 0 16px 42px color-mix(in srgb, var(--background-modifier-box-shadow) 34%, transparent);
+  box-shadow: 0 16px 42px color-mix(in srgb, var(--mind-trace-shadow-color) 34%, transparent);
 }
 
 .mind-trace-confirm-modal,
 .mind-trace-password-modal,
-.mind-trace-dialog-shell .mind-trace-dialog-content { padding: 22px; }
+.mind-trace-dialog-shell .mind-trace-dialog-content,
+.mind-trace-operation-result { padding: 22px; }
 
 .mind-trace-dialog-title { margin: 0 0 8px; color: var(--text-normal); font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
 .mind-trace-dialog-body { margin: 0; color: var(--mind-trace-readable-meta); font-size: 14px; line-height: 1.62; }
 .mind-trace-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 19px; }
 .mind-trace-dialog-actions button { min-height: 36px; border-radius: var(--mind-trace-radius-control); font-size: 13px; }
-.mind-trace-dialog-actions button.mod-cta { border-color: var(--mind-trace-role-record); background: var(--mind-trace-role-record); color: var(--text-on-accent); }
+.mind-trace-dialog-actions button.mod-cta { border-color: var(--mind-trace-role-record); background: var(--mind-trace-role-record); color: var(--mind-trace-role-foreground); }
 .mind-trace-password-modal input { border-color: var(--mind-trace-keyline); border-radius: var(--mind-trace-radius-control); caret-color: var(--mind-trace-role-record); }
 
 /* Remove legacy decorative gradients from the live instrument. */
@@ -9901,8 +9996,7 @@ button.mind-trace-theme-filter-button:hover {
   }
 
   /* F2 · the event and question editors retain the shared visible focus language. */
-  .mind-trace-view .mind-trace-trajectory-event-card:focus,
-  .mind-trace-view .mind-trace-trajectory-event-card:focus-visible {
+  .mind-trace-view .mind-trace-trajectory-event-card:focus-within {
     outline: 2px solid var(--mind-trace-role-trajectory);
     outline-offset: 2px;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--mind-trace-role-trajectory) 18%, transparent);
@@ -10030,18 +10124,6 @@ button.mind-trace-theme-filter-button:hover {
 /* Runtime regression pass: one outer canvas, intrinsic card heights, and
    narrow-pane-safe observation states.  Keep this cascade last because a few
    older component rules still place dashboard children in a legacy grid. */
-:root {
-  --mind-trace-content-width: 1180px;
-  --mind-trace-content-padding: clamp(18px, 3vw, 36px);
-  --mind-trace-keyline: color-mix(in srgb, var(--text-muted) 34%, var(--background-primary));
-  --mind-trace-keyline-strong: color-mix(in srgb, var(--text-normal) 44%, var(--background-primary));
-}
-
-.theme-dark {
-  --mind-trace-keyline: color-mix(in srgb, var(--text-muted) 44%, var(--background-primary));
-  --mind-trace-keyline-strong: color-mix(in srgb, var(--text-normal) 52%, var(--background-primary));
-}
-
 /* The home, trajectory, review, observation, and record views share the same
    1180px outer edge and horizontal padding. */
 .mind-trace-view .mind-trace-home-shell,
@@ -10712,7 +10794,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-record-context-kicker {
   color: var(--mind-trace-role-record);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -10749,7 +10831,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-record-context-progress-label strong {
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -10786,7 +10868,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-record-context-state-row dd {
   margin: 0;
   color: var(--text-normal);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -10811,7 +10893,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-record-context-answer-count strong {
   color: var(--mind-trace-role-record);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
@@ -10980,7 +11062,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-trend-foot-item strong {
   color: var(--text-muted);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -11020,7 +11102,7 @@ button.mind-trace-theme-filter-button:hover {
   padding-top: 9px;
   border-top: 1px solid var(--mind-trace-keyline);
   color: var(--mind-trace-readable-meta);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -11047,7 +11129,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-observation-dashboard-clues {
   display: grid;
   gap: 6px;
-  font-family: var(--font-text);
+  font-family: var(--mind-trace-body-font);
   font-variant-numeric: normal;
 }
 
@@ -11061,7 +11143,7 @@ button.mind-trace-theme-filter-button:hover {
 
 .mind-trace-view .mind-trace-observation-dashboard-clue-dimension {
   color: var(--mind-trace-role-observation);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -11207,7 +11289,7 @@ button.mind-trace-theme-filter-button:hover {
   padding-top: 10px;
   border-top: 1px solid var(--mind-trace-reader-line);
   color: var(--mind-trace-readable-meta);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -11252,7 +11334,7 @@ button.mind-trace-theme-filter-button:hover {
 .mind-trace-view .mind-trace-diary-margin-title {
   margin-bottom: 10px;
   color: var(--mind-trace-role-observation);
-  font-family: var(--font-monospace);
+  font-family: var(--mind-trace-mono-font);
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -11354,7 +11436,7 @@ button.mind-trace-theme-filter-button:hover {
 
 
 .mind-trace-view .mind-trace-nav-item.is-record:disabled {
-  color: color-mix(in srgb, var(--text-on-accent) 72%, var(--mind-trace-role-record));
+  color: color-mix(in srgb, var(--mind-trace-role-foreground) 72%, var(--mind-trace-role-record));
   background: color-mix(in srgb, var(--mind-trace-role-record) 60%, var(--background-primary));
 }
 
@@ -11628,12 +11710,6 @@ button.mind-trace-theme-filter-button:hover {
 /* Finishing pass · evidence instrument type, targets, and resilient shells   */
 /* -------------------------------------------------------------------------- */
 
-:root {
-  --mind-trace-title-font: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --mind-trace-body-font: var(--font-interface, "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
-  --mind-trace-mono-font: var(--font-monospace, ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace);
-}
-
 /* Keep the plugin in Obsidian's text system while giving headings a quiet
    humanistic voice.  Dates, counts, and evidence references stay measurable. */
 .mind-trace-view,
@@ -11891,7 +11967,7 @@ button.mind-trace-theme-filter-button:hover {
   outline-offset: 2px;
 }
 
-.mind-trace-view .mind-trace-trajectory-event-card:focus-visible,
+.mind-trace-view .mind-trace-trajectory-event-card:focus-within,
 .mind-trace-view .mind-trace-trajectory-chip:focus-visible,
 .mind-trace-view .mind-trace-trajectory-entity-chip:focus-visible {
   outline-color: var(--mind-trace-role-trajectory);
@@ -12339,7 +12415,7 @@ button.mind-trace-theme-filter-button:hover {
     border-inline-start: 4px solid var(--mind-trace-checkin-color);
     border-radius: 13px;
     background: var(--background-secondary);
-    box-shadow: 0 5px 18px color-mix(in srgb, var(--background-modifier-box-shadow) 13%, transparent);
+    box-shadow: 0 5px 18px color-mix(in srgb, var(--mind-trace-shadow-color) 13%, transparent);
   }
 
   .mind-trace-view .mind-trace-journal-shell.is-checkin .mind-trace-checkin-card.mind-trace-checkin-mood {
@@ -12454,7 +12530,7 @@ button.mind-trace-theme-filter-button:hover {
   .mind-trace-view .mind-trace-journal-shell.is-checkin .mind-trace-checkin-scale button.is-selected {
     border-color: var(--mind-trace-checkin-color);
     background: var(--mind-trace-checkin-color);
-    color: var(--text-on-accent, #fff);
+    color: var(--mind-trace-role-foreground);
     font-weight: 700;
     transform: none;
   }
@@ -12529,7 +12605,7 @@ button.mind-trace-theme-filter-button:hover {
     border-top: 2px solid var(--mind-trace-role-record);
     border-radius: 13px;
     background: var(--background-secondary);
-    box-shadow: 0 7px 22px color-mix(in srgb, var(--background-modifier-box-shadow) 12%, transparent);
+    box-shadow: 0 7px 22px color-mix(in srgb, var(--mind-trace-shadow-color) 12%, transparent);
     transform: none;
   }
 
@@ -12703,7 +12779,7 @@ button.mind-trace-theme-filter-button:hover {
     border: 1px solid var(--mind-trace-keyline);
     border-radius: 14px;
     background: var(--background-primary);
-    box-shadow: 0 12px 34px color-mix(in srgb, var(--mind-trace-role-record) 8%, transparent), 0 3px 10px color-mix(in srgb, var(--background-modifier-box-shadow) 12%, transparent);
+    box-shadow: 0 12px 34px color-mix(in srgb, var(--mind-trace-role-record) 8%, transparent), 0 3px 10px color-mix(in srgb, var(--mind-trace-shadow-color) 12%, transparent);
   }
 
   .mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-writing-sheet > .mind-trace-progress,
@@ -12927,7 +13003,7 @@ button.mind-trace-theme-filter-button:hover {
     border-radius: 5px;
     background: var(--background-primary);
     color: var(--text-faint);
-    font-family: var(--font-monospace);
+    font-family: var(--mind-trace-mono-font);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     line-height: 1.25;
@@ -13401,13 +13477,13 @@ button.mind-trace-theme-filter-button:hover {
   margin-top: 14px;
   padding: 18px;
   border: 1px solid var(--background-modifier-border);
-  border-left: 3px solid var(--interactive-accent);
+  border-inline-start: 3px solid var(--interactive-accent);
   border-radius: 14px;
   background: var(--background-primary);
 }
 
 .mind-trace-view .mind-trace-observation-claim.is-hypothesis {
-  border-left-color: var(--color-orange);
+  border-inline-start-color: var(--color-orange);
 }
 
 .mind-trace-view .mind-trace-observation-evidence-block {
@@ -13421,7 +13497,7 @@ button.mind-trace-theme-filter-button:hover {
   margin-top: 6px;
   padding: 9px 10px;
   white-space: normal;
-  text-align: left;
+  text-align: start;
   line-height: 1.5;
 }
 
@@ -13449,4 +13525,802 @@ button.mind-trace-theme-filter-button:hover {
   .mind-trace-view .mind-trace-observation-dimension-card {
     min-height: auto;
   }
+}
+
+[dir="rtl"] .mind-trace-home-row-arrow,
+.mod-rtl .mind-trace-home-row-arrow,
+[dir="rtl"] .mind-trace-cal-nav-button svg,
+.mod-rtl .mind-trace-cal-nav-button svg {
+  transform: scaleX(-1);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Coherence pass · inner weather, responsive evidence, and breathing room    */
+/* -------------------------------------------------------------------------- */
+
+body {
+  --mind-trace-mood-level-1: color-mix(in srgb, var(--mind-trace-role-mood) 14%, var(--background-primary));
+  --mind-trace-mood-level-2: color-mix(in srgb, var(--mind-trace-role-mood) 30%, var(--background-primary));
+  --mind-trace-mood-level-3: color-mix(in srgb, var(--mind-trace-role-mood) 48%, var(--background-primary));
+  --mind-trace-mood-level-4: color-mix(in srgb, var(--mind-trace-role-mood) 68%, var(--background-primary));
+  --mind-trace-mood-level-5: color-mix(in srgb, var(--mind-trace-role-mood) 88%, var(--background-primary));
+  --mind-trace-energy-level-1: color-mix(in srgb, var(--mind-trace-role-energy) 14%, var(--background-primary));
+  --mind-trace-energy-level-2: color-mix(in srgb, var(--mind-trace-role-energy) 30%, var(--background-primary));
+  --mind-trace-energy-level-3: color-mix(in srgb, var(--mind-trace-role-energy) 48%, var(--background-primary));
+  --mind-trace-energy-level-4: color-mix(in srgb, var(--mind-trace-role-energy) 68%, var(--background-primary));
+  --mind-trace-energy-level-5: color-mix(in srgb, var(--mind-trace-role-energy) 88%, var(--background-primary));
+  --mind-trace-stress-level-1: color-mix(in srgb, var(--mind-trace-role-stress) 14%, var(--background-primary));
+  --mind-trace-stress-level-2: color-mix(in srgb, var(--mind-trace-role-stress) 30%, var(--background-primary));
+  --mind-trace-stress-level-3: color-mix(in srgb, var(--mind-trace-role-stress) 48%, var(--background-primary));
+  --mind-trace-stress-level-4: color-mix(in srgb, var(--mind-trace-role-stress) 68%, var(--background-primary));
+  --mind-trace-stress-level-5: color-mix(in srgb, var(--mind-trace-role-stress) 88%, var(--background-primary));
+  --mind-trace-mood-scale-text-soft: var(--text-normal);
+  --mind-trace-mood-scale-text-strong: #fff;
+}
+
+.theme-dark {
+  --mind-trace-mood-scale-text-soft: var(--text-normal);
+  --mind-trace-mood-scale-text-strong: #281714;
+}
+
+/* Calendar and trajectory heatmap share one legible "inner weather" scale. */
+.mind-trace-view :is(
+  .mind-trace-cal-cell,
+  .mind-trace-calendar-evidence-day,
+  .mind-trace-heat-cell,
+  .mind-trace-heatmap-swatch
+).mind-trace-cal-day-1 {
+  background-color: var(--mind-trace-mood-level-1) !important;
+  color: var(--mind-trace-mood-scale-text-soft) !important;
+}
+
+.mind-trace-view :is(
+  .mind-trace-cal-cell,
+  .mind-trace-calendar-evidence-day,
+  .mind-trace-heat-cell,
+  .mind-trace-heatmap-swatch
+).mind-trace-cal-day-2 {
+  background-color: var(--mind-trace-mood-level-2) !important;
+  color: var(--mind-trace-mood-scale-text-soft) !important;
+}
+
+.mind-trace-view :is(
+  .mind-trace-cal-cell,
+  .mind-trace-calendar-evidence-day,
+  .mind-trace-heat-cell,
+  .mind-trace-heatmap-swatch
+).mind-trace-cal-day-3 {
+  background-color: var(--mind-trace-mood-level-3) !important;
+  color: var(--mind-trace-mood-scale-text-soft) !important;
+}
+
+.mind-trace-view :is(
+  .mind-trace-cal-cell,
+  .mind-trace-calendar-evidence-day,
+  .mind-trace-heat-cell,
+  .mind-trace-heatmap-swatch
+).mind-trace-cal-day-4 {
+  background-color: var(--mind-trace-mood-level-4) !important;
+  color: var(--mind-trace-mood-scale-text-strong) !important;
+}
+
+.mind-trace-view :is(
+  .mind-trace-cal-cell,
+  .mind-trace-calendar-evidence-day,
+  .mind-trace-heat-cell,
+  .mind-trace-heatmap-swatch
+).mind-trace-cal-day-5 {
+  background-color: var(--mind-trace-mood-level-5) !important;
+  color: var(--mind-trace-mood-scale-text-strong) !important;
+}
+
+.mind-trace-view .mind-trace-cal-cell:not(.is-blank),
+.mind-trace-view .mind-trace-heat-cell:not(.is-empty) {
+  border-color: color-mix(in srgb, currentColor 24%, transparent);
+}
+
+/* Numeric signs retain direction; colour communicates whether the change is favourable. */
+.mind-trace-view .mind-trace-trend-mini-delta.is-favorable {
+  color: var(--text-success);
+  font-weight: 700;
+}
+
+.mind-trace-view .mind-trace-trend-mini-delta.is-unfavorable {
+  color: var(--text-error);
+  font-weight: 700;
+}
+
+.mind-trace-view .mind-trace-trend-mini-delta.is-neutral {
+  color: var(--text-faint);
+}
+
+.mind-trace-view .mind-trace-trend-legend-band-mood,
+.mind-trace-view .mind-trace-trend-legend-band-mood .mind-trace-trend-legend-line {
+  color: var(--mind-trace-role-mood);
+  border-color: color-mix(in srgb, var(--mind-trace-role-mood) 60%, var(--mind-trace-keyline));
+  background: color-mix(in srgb, var(--mind-trace-role-mood) 14%, transparent);
+}
+
+.mind-trace-view .mind-trace-trend-legend-band-energy,
+.mind-trace-view .mind-trace-trend-legend-band-energy .mind-trace-trend-legend-line {
+  color: var(--mind-trace-role-energy);
+  border-color: color-mix(in srgb, var(--mind-trace-role-energy) 60%, var(--mind-trace-keyline));
+  background: color-mix(in srgb, var(--mind-trace-role-energy) 14%, transparent);
+}
+
+.mind-trace-view .mind-trace-trend-legend-band-stress,
+.mind-trace-view .mind-trace-trend-legend-band-stress .mind-trace-trend-legend-line {
+  color: var(--mind-trace-role-stress);
+  border-color: color-mix(in srgb, var(--mind-trace-role-stress) 60%, var(--mind-trace-keyline));
+  background: color-mix(in srgb, var(--mind-trace-role-stress) 14%, transparent);
+}
+
+/* Recent events consume the real card height without creating a second scrollbar. */
+.mind-trace-view .mind-trace-home-workspace-events > .mind-trace-events-card {
+  overflow: hidden;
+}
+
+.mind-trace-view .mind-trace-events-list {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+.mind-trace-view .mind-trace-events-list .mind-trace-event-row {
+  flex: 0 0 auto;
+}
+
+.mind-trace-view .mind-trace-events-list .mind-trace-event-row[hidden],
+.mind-trace-view .mind-trace-events-filler[hidden] {
+  display: none !important;
+}
+
+.mind-trace-view .mind-trace-events-filler {
+  display: flex;
+  min-height: 72px;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--mind-trace-keyline);
+  color: var(--mind-trace-readable-meta);
+  font-size: 13px;
+  text-align: center;
+}
+
+.mind-trace-view .mind-trace-events-footer {
+  flex: 0 0 auto;
+  padding-top: 12px;
+}
+
+.mind-trace-view .mind-trace-events-footer .mind-trace-home-support-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  margin: 0;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--mind-trace-role-trajectory) 48%, var(--mind-trace-keyline));
+  border-radius: var(--mind-trace-radius-control);
+  background: color-mix(in srgb, var(--mind-trace-role-trajectory) 8%, var(--background-primary));
+  color: var(--mind-trace-role-trajectory);
+  text-decoration: none;
+}
+
+.mind-trace-view .mind-trace-events-footer .mind-trace-home-support-link:hover {
+  border-color: var(--mind-trace-role-trajectory);
+  background: color-mix(in srgb, var(--mind-trace-role-trajectory) 14%, var(--background-primary));
+  text-decoration: none;
+}
+
+/* Check-in scales use stable semantic spectra instead of a flat wash. */
+.mind-trace-view .mind-trace-journal-shell.is-checkin .mind-trace-checkin-mood .mind-trace-checkin-strip {
+  background: linear-gradient(90deg, var(--mind-trace-mood-level-1), var(--mind-trace-mood-level-2), var(--mind-trace-mood-level-3), var(--mind-trace-mood-level-4), var(--mind-trace-mood-level-5));
+}
+
+.mind-trace-view .mind-trace-journal-shell.is-checkin .mind-trace-checkin-energy .mind-trace-checkin-strip {
+  background: linear-gradient(90deg, var(--mind-trace-energy-level-1), var(--mind-trace-energy-level-2), var(--mind-trace-energy-level-3), var(--mind-trace-energy-level-4), var(--mind-trace-energy-level-5));
+}
+
+.mind-trace-view .mind-trace-journal-shell.is-checkin .mind-trace-checkin-stress .mind-trace-checkin-strip {
+  background: linear-gradient(90deg, var(--mind-trace-stress-level-1), var(--mind-trace-stress-level-2), var(--mind-trace-stress-level-3), var(--mind-trace-stress-level-4), var(--mind-trace-stress-level-5));
+}
+
+.mind-trace-view .mind-trace-journal-shell.is-checkin .mind-trace-checkin-strip {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-normal) 18%, transparent);
+}
+
+.mind-trace-view .mind-trace-record-context-state-row.is-mood :is(dt, dd) { color: var(--mind-trace-role-mood); }
+.mind-trace-view .mind-trace-record-context-state-row.is-energy :is(dt, dd) { color: var(--mind-trace-role-energy); }
+.mind-trace-view .mind-trace-record-context-state-row.is-stress :is(dt, dd) { color: var(--mind-trace-role-stress); }
+
+/* The context rail follows the actual current card, not the viewport centre. */
+.mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline .mind-trace-record-context,
+.mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline:not(.has-history) .mind-trace-record-context,
+.mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline.has-history .mind-trace-record-context {
+  position: static;
+  top: auto;
+  align-self: start;
+  max-height: none;
+  margin-top: var(--mind-trace-record-context-offset, 0px);
+  overflow: visible;
+  overscroll-behavior: auto;
+  transform: none;
+  transition: margin-top 160ms ease-out;
+}
+
+/* Monthly formation: every intersecting natural week owns one equal segment. */
+.mind-trace-view .mind-trace-formation-segments {
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--mind-trace-keyline);
+  border-radius: 4px;
+  background: var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-formation-segment {
+  flex: 1 1 0;
+  border-radius: 0;
+  background: var(--background-primary);
+}
+
+.mind-trace-view .mind-trace-formation-seg-fill,
+.mind-trace-view .mind-trace-formation-seg-spill {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+}
+
+.mind-trace-view .mind-trace-formation-segment.is-reached .mind-trace-formation-seg-fill {
+  background: var(--mind-trace-role-energy);
+}
+
+.mind-trace-view .mind-trace-formation-segment.is-future {
+  background: color-mix(in srgb, var(--background-secondary) 58%, var(--background-primary));
+}
+
+.mind-trace-view .mind-trace-formation-seg-labels {
+  align-items: flex-start;
+  gap: 1px;
+  height: auto;
+  min-height: 42px;
+}
+
+.mind-trace-view .mind-trace-formation-seg-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+
+.mind-trace-view .mind-trace-formation-seg-primary {
+  color: currentColor;
+  font-weight: 650;
+}
+
+.mind-trace-view .mind-trace-formation-seg-secondary {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.mind-trace-view .mind-trace-formation-seg-secondary.is-overflow {
+  color: var(--mind-trace-role-stress);
+  font-weight: 650;
+}
+
+.mind-trace-view .mind-trace-formation-seg-label.is-future {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* Report navigation is a real padded control, not an unmounted-looking label. */
+.mind-trace-view .mind-trace-report-trajectory-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  margin-top: 14px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--mind-trace-role-trajectory) 48%, var(--mind-trace-keyline));
+  border-radius: var(--mind-trace-radius-control);
+  background: color-mix(in srgb, var(--mind-trace-role-trajectory) 8%, var(--background-primary));
+  color: var(--mind-trace-role-trajectory);
+  text-decoration: none;
+}
+
+.mind-trace-view .mind-trace-report-trajectory-link:hover,
+.mind-trace-view .mind-trace-report-trajectory-link:focus-visible {
+  border-color: var(--mind-trace-role-trajectory);
+  background: color-mix(in srgb, var(--mind-trace-role-trajectory) 14%, var(--background-primary));
+  text-decoration: none;
+}
+
+.mind-trace-view .mind-trace-reports-page > :where(.mind-trace-formation-strip, .mind-trace-report-tabs, .mind-trace-report-panel),
+.mind-trace-view .mind-trace-trajectory-page > :where(.mind-trace-trajectory-tabs, .mind-trace-trajectory-panel),
+.mind-trace-view .mind-trace-observation-page > :where(.mind-trace-observation-history, .mind-trace-observation-hero, .mind-trace-observation-growth, .mind-trace-observation-panorama, .mind-trace-observation-section, .mind-trace-observation-closing, .mind-trace-observation-sources) {
+  margin-block-start: 24px;
+}
+
+/* Saved diary: prose owns the width; event/theme cues sit directly below. */
+.mind-trace-view.mind-trace-saved-file-view .mind-trace-diary-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding: 28px 0 30px;
+}
+
+.mind-trace-view.mind-trace-saved-file-view .mind-trace-diary-heading {
+  width: min(100%, 76ch);
+  max-width: 76ch;
+  margin-inline: auto;
+  margin-bottom: 22px;
+}
+
+.mind-trace-view .mind-trace-diary-writing,
+.mind-trace-view .mind-trace-diary-writing.has-margin {
+  display: block;
+  width: min(100%, 76ch);
+  max-width: 76ch;
+  margin-inline: auto;
+}
+
+.mind-trace-view.mind-trace-saved-file-view .mind-trace-saved-diary,
+.mind-trace-view .mind-trace-diary-writing.has-margin .mind-trace-saved-diary {
+  min-height: 0;
+  max-width: 76ch;
+  padding: 0;
+  border: 0;
+  color: var(--text-normal);
+  font-size: clamp(16px, 1.4vw, 18px);
+  letter-spacing: 0.008em;
+  line-height: 1.95;
+}
+
+.mind-trace-view .mind-trace-diary-notes {
+  width: min(100%, 76ch);
+  margin-top: 24px;
+  margin-inline: auto;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--mind-trace-reader-line-strong);
+  border-inline-start: 0;
+}
+
+.mind-trace-view .mind-trace-diary-notes ul {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 9px 20px;
+}
+
+/* Draft and regeneration proof keep the same centred diary measure as the
+   saved reader. Short entries grow from their content instead of reserving
+   a large empty writing field. */
+.mind-trace-view .mind-trace-journal-shell.is-preview > .mind-trace-diary-card,
+.mind-trace-journal-regeneration-preview-body .mind-trace-diary-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.mind-trace-view .mind-trace-journal-shell.is-preview .mind-trace-diary-heading,
+.mind-trace-journal-regeneration-preview-body .mind-trace-diary-heading {
+  width: min(100%, 76ch);
+  max-width: 76ch;
+  margin-inline: auto;
+}
+
+.mind-trace-view .mind-trace-journal-shell.is-preview .mind-trace-diary-editor {
+  min-height: 0;
+}
+
+.mind-trace-journal-regeneration-preview-body .mind-trace-diary-writing {
+  display: block;
+  width: min(100%, 76ch);
+  max-width: 76ch;
+  margin-inline: auto;
+}
+
+.mind-trace-journal-regeneration-preview-body .mind-trace-saved-diary {
+  min-height: 0;
+  max-width: 76ch;
+}
+
+.mind-trace-journal-regeneration-preview-body .mind-trace-diary-notes {
+  width: min(100%, 76ch);
+  margin-inline: auto;
+}
+
+/* Observation is one review sequence: change, evidence, then self-calibration. */
+.mind-trace-view .mind-trace-observation-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 24px;
+  padding: 22px 24px;
+  border-inline-start: 3px solid var(--mind-trace-role-observation);
+}
+
+.mind-trace-view .mind-trace-observation-hero .mind-trace-observation-meta,
+.mind-trace-view .mind-trace-observation-hero .mind-trace-observation-freshness {
+  grid-column: 1 / -1;
+}
+
+.mind-trace-view .mind-trace-observation-hero .mind-trace-observation-summary {
+  align-self: center;
+  margin: 0;
+  font-size: clamp(18px, 2.2vw, 24px);
+  line-height: 1.55;
+}
+
+.mind-trace-view .mind-trace-observation-hero .mind-trace-observation-actions {
+  align-self: center;
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.mind-trace-view .mind-trace-observation-growth {
+  padding: 18px 20px;
+  border: 1px solid var(--mind-trace-keyline);
+  border-radius: var(--mind-trace-radius-panel);
+  background: var(--background-secondary);
+}
+
+.mind-trace-view .mind-trace-observation-growth-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mind-trace-view .mind-trace-observation-growth-summary {
+  color: var(--mind-trace-readable-meta);
+  font-family: var(--mind-trace-mono-font);
+  font-size: 12px;
+}
+
+.mind-trace-view .mind-trace-observation-growth-track {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+  border-top: 1px solid var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-growth-step {
+  position: relative;
+  padding: 13px 8px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.mind-trace-view .mind-trace-observation-growth-step-dot {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--background-secondary);
+  border-radius: 50%;
+  background: var(--mind-trace-keyline-strong);
+}
+
+.mind-trace-view .mind-trace-observation-growth-step.is-complete,
+.mind-trace-view .mind-trace-observation-growth-step.is-current {
+  color: var(--mind-trace-role-observation);
+}
+
+.mind-trace-view .mind-trace-observation-growth-step.is-complete .mind-trace-observation-growth-step-dot,
+.mind-trace-view .mind-trace-observation-growth-step.is-current .mind-trace-observation-growth-step-dot {
+  background: var(--mind-trace-role-observation);
+}
+
+.mind-trace-view .mind-trace-observation-growth-step.is-current {
+  font-weight: 700;
+}
+
+.mind-trace-view .mind-trace-observation-growth-detail {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-growth-detail > summary,
+.mind-trace-view .mind-trace-observation-evidence-more > summary,
+.mind-trace-view .mind-trace-observation-boundary > summary {
+  color: var(--mind-trace-role-observation);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mind-trace-view .mind-trace-observation-panorama {
+  padding: 0;
+  border: 0;
+}
+
+.mind-trace-view .mind-trace-observation-panorama-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--mind-trace-keyline);
+  border-radius: var(--mind-trace-radius-control);
+  background: var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-dimension-card,
+.mind-trace-view button.mind-trace-observation-dimension-card {
+  display: flex;
+  min-height: 58px;
+  padding: 10px 11px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 0;
+  background: var(--background-primary);
+  box-shadow: none;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.mind-trace-view .mind-trace-observation-dimension-card.has-evidence {
+  color: var(--mind-trace-role-observation);
+}
+
+.mind-trace-view .mind-trace-observation-dimension-signal,
+.mind-trace-view .mind-trace-observation-dimension-card .mind-trace-observation-muted {
+  margin-top: 6px;
+  color: var(--mind-trace-readable-meta);
+  font-size: 11px;
+}
+
+.mind-trace-view .mind-trace-observation-changes-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 16px 24px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-changes-heading p {
+  margin: 0;
+}
+
+.mind-trace-view .mind-trace-observation-claim {
+  margin: 18px 0 0;
+  padding: 22px 24px 20px;
+  border: 1px solid var(--mind-trace-keyline);
+  border-inline-start: 3px solid var(--mind-trace-role-observation);
+  border-radius: var(--mind-trace-radius-panel);
+  background: var(--background-secondary);
+}
+
+.mind-trace-view .mind-trace-observation-claim-identity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.mind-trace-view .mind-trace-observation-claim-index {
+  color: var(--mind-trace-role-observation);
+  font-family: var(--mind-trace-mono-font);
+  font-size: 11px;
+}
+
+.mind-trace-view .mind-trace-observation-claim > .mind-trace-observation-item-copy {
+  max-width: 50em;
+  margin-top: 15px;
+  color: var(--text-normal);
+  font-size: clamp(17px, 2vw, 20px);
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.mind-trace-view .mind-trace-observation-claim > .mind-trace-observation-change-copy {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.mind-trace-view .mind-trace-observation-claim > .mind-trace-observation-basis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+  color: var(--mind-trace-readable-meta);
+}
+
+.mind-trace-view .mind-trace-observation-claim > .mind-trace-observation-basis span {
+  padding: 4px 7px;
+  border: 1px solid var(--mind-trace-keyline);
+  border-radius: 5px;
+  background: var(--background-primary);
+  font-size: 11px;
+}
+
+.mind-trace-view .mind-trace-observation-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 19px;
+  padding-top: 18px;
+  border-top: 1px solid var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-evidence-block {
+  min-width: 0;
+  margin: 0;
+}
+
+.mind-trace-view .mind-trace-observation-evidence-record {
+  margin-top: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--mind-trace-keyline);
+  border-radius: var(--mind-trace-radius-control);
+  background: var(--background-primary);
+}
+
+.mind-trace-view .mind-trace-observation-evidence-more {
+  margin-top: 9px;
+}
+
+.mind-trace-view .mind-trace-observation-boundary {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-boundary > div {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.mind-trace-view .mind-trace-observation-feedback-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 12px;
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-observation-feedback-prompt {
+  margin-right: auto;
+  color: var(--text-normal);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+@container (max-width: 820px) {
+  .mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline .mind-trace-record-context,
+  .mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline:not(.has-history) .mind-trace-record-context,
+  .mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-conversation.is-timeline.has-history .mind-trace-record-context {
+    grid-column: 1;
+    margin-top: 0;
+  }
+
+  .mind-trace-view .mind-trace-journal-shell.is-question .mind-trace-record-flow {
+    grid-column: 1;
+  }
+
+  .mind-trace-view .mind-trace-observation-panorama-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mind-trace-view .mind-trace-observation-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mind-trace-view .mind-trace-observation-hero .mind-trace-observation-actions {
+    justify-content: flex-start;
+  }
+}
+
+@container (max-width: 560px) {
+  .mind-trace-view .mind-trace-observation-evidence-grid,
+  .mind-trace-view .mind-trace-observation-changes-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mind-trace-view .mind-trace-observation-panorama-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mind-trace-view .mind-trace-observation-growth-heading,
+  .mind-trace-view .mind-trace-observation-feedback-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mind-trace-view .mind-trace-record-context {
+    transition: none !important;
+  }
+}
+
+/* Theme-proof data geometry: clickable marks match static marks exactly. */
+.mind-trace-view button.mind-trace-heat-cell {
+  appearance: none;
+  border-radius: 2px !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* Timeline rows stay on the page canvas instead of inheriting button fog. */
+.mind-trace-view button.mind-trace-home-row {
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.mind-trace-view button.mind-trace-home-row:hover,
+.mind-trace-view button.mind-trace-home-row:focus-visible {
+  background: color-mix(in srgb, var(--text-normal) 5%, transparent) !important;
+}
+
+/* All maturity cards share one grid row and therefore one bottom edge. */
+.mind-trace-view .mind-trace-observation-growth-list {
+  align-items: stretch;
+  grid-auto-rows: 1fr;
+}
+
+.mind-trace-view .mind-trace-observation-growth-card {
+  box-sizing: border-box;
+  height: 100%;
+}
+
+/* Weekly formation uses one continuous track split into equal day cells. */
+.mind-trace-view .mind-trace-formation-day-segments {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: repeat(var(--mind-trace-formation-day-count, 5), minmax(0, 1fr));
+  gap: 1px;
+  width: 100%;
+  height: 14px;
+  min-height: 14px;
+  overflow: hidden;
+  border: 1px solid var(--mind-trace-keyline);
+  border-radius: 4px;
+  background: var(--mind-trace-keyline);
+}
+
+.mind-trace-view .mind-trace-formation-day-segment {
+  min-width: 0;
+  background: var(--background-primary);
+}
+
+.mind-trace-view .mind-trace-formation-day-segment.is-filled {
+  background: var(--mind-trace-role-record);
+}
+
+.mind-trace-view .mind-trace-formation-day-segment.is-overflow {
+  background: var(--mind-trace-role-stress);
+}
+
+/* Both cards reserve the same label and track geometry. */
+.mind-trace-view .mind-trace-formation-head {
+  min-height: 38px;
+}
+
+.mind-trace-view .mind-trace-formation-seg-labels {
+  box-sizing: border-box;
+  height: 52px;
+  min-height: 52px;
+}
+
+.mind-trace-view .mind-trace-formation-day-labels .mind-trace-formation-seg-label.is-overflow .mind-trace-formation-seg-primary {
+  color: var(--mind-trace-role-stress);
+}
+
+.mind-trace-view .mind-trace-formation-segments,
+.mind-trace-view .mind-trace-formation-day-segments {
+  box-sizing: border-box;
+  height: 14px;
+  min-height: 14px;
 }

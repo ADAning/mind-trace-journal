@@ -265,9 +265,10 @@ var LLM_REQUEST_TIMEOUT_MS = 120 * 1e3;
 async function requestUrlWithTimeout(request, timeoutMs, signal) {
   let timeout = null;
   let onAbort = null;
+  const requestWindow = activeWindow;
   const pending: Promise<any>[] = [(0, import_obsidian2.requestUrl)(request)];
   pending.push(new Promise((_, reject) => {
-    timeout = globalThis.setTimeout(() => reject(new Error("模型请求超时，请稍后重试")), timeoutMs);
+    timeout = requestWindow.setTimeout(() => reject(new Error("模型请求超时，请稍后重试")), timeoutMs);
   }));
   if (signal !== null) {
     pending.push(new Promise((_, reject) => {
@@ -282,7 +283,7 @@ async function requestUrlWithTimeout(request, timeoutMs, signal) {
   try {
     return await Promise.race(pending);
   } finally {
-    if (timeout !== null) globalThis.clearTimeout(timeout);
+    if (timeout !== null) requestWindow.clearTimeout(timeout);
     if (signal !== null && onAbort !== null) signal.removeEventListener("abort", onAbort);
   }
 }
@@ -452,14 +453,14 @@ function captureMindTraceContext(root) {
   const ownerWindow = mindTraceWindow(root);
   const scroller = findMindTraceScroller(root);
   const activeElement = ownerDocument.activeElement;
-  const active = activeElement instanceof ownerWindow.HTMLElement && root.contains(activeElement) ? activeElement : null;
+  const active = activeElement !== null && activeElement.instanceOf(ownerWindow.HTMLElement) && root.contains(activeElement) ? activeElement : null;
   const focusKey = active?.getAttribute("data-mind-trace-focus-key") ?? active?.getAttribute("aria-label") ?? active?.id ?? null;
   return {
     scroller,
     scrollTop: scroller.scrollTop,
     focusKey,
-    selectionStart: active instanceof ownerWindow.HTMLInputElement || active instanceof ownerWindow.HTMLTextAreaElement ? active.selectionStart : null,
-    selectionEnd: active instanceof ownerWindow.HTMLInputElement || active instanceof ownerWindow.HTMLTextAreaElement ? active.selectionEnd : null
+    selectionStart: active?.instanceOf(ownerWindow.HTMLInputElement) || active?.instanceOf(ownerWindow.HTMLTextAreaElement) ? active.selectionStart : null,
+    selectionEnd: active?.instanceOf(ownerWindow.HTMLInputElement) || active?.instanceOf(ownerWindow.HTMLTextAreaElement) ? active.selectionEnd : null
   };
 }
 function restoreMindTraceContext(root, context) {
@@ -480,7 +481,7 @@ function restoreMindTraceContext(root, context) {
       return;
     }
     target.focus({ preventScroll: true });
-    if ((target instanceof ownerWindow.HTMLInputElement || target instanceof ownerWindow.HTMLTextAreaElement) && context.selectionStart !== null && context.selectionEnd !== null) {
+    if ((target.instanceOf(ownerWindow.HTMLInputElement) || target.instanceOf(ownerWindow.HTMLTextAreaElement)) && context.selectionStart !== null && context.selectionEnd !== null) {
       target.setSelectionRange(context.selectionStart, context.selectionEnd);
     }
     if (scroller !== null) {
@@ -564,7 +565,7 @@ var ObservationFeedbackModal = class extends import_obsidian7.Modal {
     this.contentEl.createDiv({ cls: "mind-trace-dialog-title", text: "这条观察像你吗？" });
     this.contentEl.createEl("p", { cls: "mind-trace-dialog-body", text: this.item?.text ?? "你可以保留、确认或否认这条观察。" });
     const choices = this.contentEl.createDiv({ cls: "mind-trace-observation-feedback-choices", attr: { role: "radiogroup", "aria-label": "观照校准状态" } });
-    const choiceLabels = [["confirmed", "像我 / 符合"], ["rejected", "不符合"], ["pending", "先保留"]];
+    const choiceLabels = [["confirmed", "符合"], ["partial", "部分符合"], ["rejected", "不符合"], ["uncertain", "暂时不确定"]];
     for (const [value, label] of choiceLabels) {
       const button = choices.createEl("button", { cls: `mind-trace-observation-feedback-choice${this.feedback.status === value ? " is-selected" : ""}`, text: label, attr: { type: "button", role: "radio", "aria-checked": String(this.feedback.status === value) } });
       button.addEventListener("click", () => {
@@ -581,17 +582,25 @@ var ObservationFeedbackModal = class extends import_obsidian7.Modal {
     const cancel = actions.createEl("button", { text: "取消", attr: { type: "button" } });
     cancel.addEventListener("click", () => this.close());
     const save = actions.createEl("button", { cls: "mod-cta", text: "保存校准", attr: { type: "button" } });
-    save.addEventListener("click", async () => {
-      save.disabled = true;
-      cancel.disabled = true;
-      try {
-        await this.onSave?.({ status: this.feedback.status, correction: correction.value.trim() });
-        this.close();
-      } catch (error) {
+    save.disabled = this.feedback.status === "pending";
+    for (const button of choices.querySelectorAll("button")) {
+      button.addEventListener("click", () => {
         save.disabled = false;
-        cancel.disabled = false;
-        showMindTraceNotice(errorMessage(error), 8e3);
-      }
+      });
+    }
+    save.addEventListener("click", () => {
+      void (async () => {
+        save.disabled = true;
+        cancel.disabled = true;
+        try {
+          await this.onSave?.({ status: this.feedback.status, correction: correction.value.trim() });
+          this.close();
+        } catch (error) {
+          save.disabled = false;
+          cancel.disabled = false;
+          showMindTraceNotice(errorMessage(error), 8e3);
+        }
+      })();
     });
     mindTraceWindow(this.contentEl).requestAnimationFrame(() => save.focus({ preventScroll: true }));
   }
@@ -635,18 +644,86 @@ var JournalRegenerationPreviewModal = class extends import_obsidian7.Modal {
     this.contentEl.empty();
   }
 };
+var MindTraceOperationResultModal = class extends import_obsidian7.Modal {
+  declare plugin: any;
+  declare configuration: any;
+  declare succeeded: boolean;
+  declare result: any;
+  declare error: any;
+  constructor(app, plugin, configuration, succeeded, result, error) {
+    super(app);
+    this.plugin = plugin;
+    this.configuration = configuration;
+    this.succeeded = succeeded;
+    this.result = result;
+    this.error = error;
+  }
+  open() {
+    if (this.plugin.trackOperation?.(this) === false) {
+      return;
+    }
+    super.open();
+  }
+  cancelFromPlugin() {
+    this.close();
+  }
+  onOpen() {
+    this.modalEl.addClass("mind-trace-operation-result-modal", "mind-trace-dialog-shell");
+    this.contentEl.addClass("mind-trace-operation-result");
+    const eyebrow = this.contentEl.createDiv({ cls: "mind-trace-dialog-eyebrow", text: this.configuration.eyebrow ?? "心迹 · 任务" });
+    eyebrow.setAttribute("aria-hidden", "true");
+    this.contentEl.createDiv({
+      cls: "mind-trace-dialog-title",
+      text: this.succeeded ? this.configuration.successTitle ?? "处理完成" : this.configuration.errorTitle ?? "处理没有完成"
+    });
+    const successDetail = typeof this.configuration.successDetail === "function" ? this.configuration.successDetail(this.result) : this.configuration.successDetail;
+    this.contentEl.createEl("p", {
+      cls: "mind-trace-dialog-body",
+      text: this.succeeded ? successDetail ?? "相关内容已经更新。" : this.error ?? "发生未知错误。"
+    });
+    const actions = this.contentEl.createDiv({ cls: "mind-trace-actions mind-trace-dialog-actions" });
+    let primary;
+    if (!this.succeeded) {
+      const closeButton = actions.createEl("button", { text: "关闭", attr: { type: "button" } });
+      closeButton.addEventListener("click", () => this.close());
+      const retry = actions.createEl("button", { cls: "mod-cta", text: "重试", attr: { type: "button" } });
+      retry.addEventListener("click", () => {
+        this.close();
+        new MindTraceTaskToast(this.app, this.plugin, this.configuration).open();
+      });
+      primary = retry;
+    } else if (this.configuration.onViewResult !== void 0 || this.configuration.successLabel) {
+      const view = actions.createEl("button", { cls: "mod-cta", text: this.configuration.successLabel ?? "查看结果", attr: { type: "button" } });
+      view.addEventListener("click", () => {
+        const result = this.result;
+        this.close();
+        this.configuration.onViewResult?.(result);
+      });
+      primary = view;
+    } else {
+      const done = actions.createEl("button", { cls: "mod-cta", text: "完成", attr: { type: "button" } });
+      done.addEventListener("click", () => this.close());
+      primary = done;
+    }
+    mindTraceWindow(this.contentEl).requestAnimationFrame(() => primary.focus({ preventScroll: true }));
+  }
+  onClose() {
+    this.contentEl.empty();
+    this.plugin.untrackOperation?.(this);
+  }
+};
 var MindTraceTaskToast = class {
   declare app: any;
   declare plugin: any;
   declare configuration: any;
   declare ownerDocument: Document;
-  declare ownerWindow: Window & typeof globalThis;
+  declare ownerWindow: ReturnType<typeof mindTraceWindow>;
   constructor(app, plugin, configuration) {
     this.app = app;
     this.plugin = plugin;
     this.configuration = configuration;
     this.ownerDocument = mindTraceWorkspaceDocument(app);
-    this.ownerWindow = this.ownerDocument.defaultView ?? globalThis.window;
+    this.ownerWindow = mindTraceWindow(this.ownerDocument.body);
   }
   phase = "running";
   minimized = false;
@@ -660,8 +737,6 @@ var MindTraceTaskToast = class {
   host = null;
   card = null;
   autoCloseTimer = null;
-  keyHandler = null;
-  backdropHandler = null;
   dockListener = null;
   resizeListener = null;
   eyebrowEl = null;
@@ -695,9 +770,9 @@ var MindTraceTaskToast = class {
     }
     if (this.phase === "running") {
       const nav = this.ownerDocument.querySelector(".mind-trace-nav");
-      if (nav instanceof this.ownerWindow.HTMLElement) {
+      if (nav !== null && nav.instanceOf(this.ownerWindow.HTMLElement)) {
         this.host.addClass("is-docked");
-        this.host.style.top = `${nav.getBoundingClientRect().bottom}px`;
+        this.host.setCssProps({ top: `${nav.getBoundingClientRect().bottom}px` });
         if (this.dockListener === null) {
           this.dockListener = () => this.dockHost();
           this.ownerWindow.addEventListener("scroll", this.dockListener, { capture: true, passive: true });
@@ -710,7 +785,7 @@ var MindTraceTaskToast = class {
       }
     }
     this.host.removeClass("is-docked");
-    this.host.style.top = "";
+    this.host.setCssProps({ top: "" });
   }
   buildShell() {
     if (this.card === null) {
@@ -728,14 +803,6 @@ var MindTraceTaskToast = class {
     if (this.autoCloseTimer !== null) {
       this.ownerWindow.clearTimeout(this.autoCloseTimer);
       this.autoCloseTimer = null;
-    }
-    if (this.keyHandler !== null) {
-      this.ownerDocument.removeEventListener("keydown", this.keyHandler);
-      this.keyHandler = null;
-    }
-    if (this.backdropHandler !== null) {
-      this.host?.removeEventListener("click", this.backdropHandler);
-      this.backdropHandler = null;
     }
     if (this.dockListener !== null) {
       this.ownerWindow.removeEventListener("scroll", this.dockListener, { capture: true });
@@ -824,7 +891,7 @@ var MindTraceTaskToast = class {
       this.close();
       return;
     }
-    this.render();
+    this.showResultModal(true);
   }
   async settleError(error) {
     if (this.cancelled) return;
@@ -837,7 +904,13 @@ var MindTraceTaskToast = class {
       this.close();
       return;
     }
-    this.render();
+    this.showResultModal(false);
+  }
+  showResultModal(succeeded) {
+    const result = this.result;
+    const error = this.error;
+    this.close();
+    new MindTraceOperationResultModal(this.app, this.plugin, this.configuration, succeeded, result, error).open();
   }
   updateProgress(progress) {
     if (this.cancelled) return;
@@ -876,18 +949,7 @@ var MindTraceTaskToast = class {
       return;
     }
     this.stopTimers();
-    this.host.toggleClass("is-result", this.phase === "success" || this.phase === "error");
     this.dockHost();
-    if (this.keyHandler !== null) {
-      this.ownerDocument.removeEventListener("keydown", this.keyHandler);
-      this.keyHandler = null;
-    }
-    if (this.backdropHandler !== null) {
-      this.host.removeEventListener("click", this.backdropHandler);
-      this.backdropHandler = null;
-    }
-    this.card.toggleClass("is-success", this.phase === "success");
-    this.card.toggleClass("is-error", this.phase === "error");
     if (this.minimized && this.phase === "running") {
       this.card.empty();
       this.shellBuilt = false;
@@ -933,47 +995,6 @@ var MindTraceTaskToast = class {
       this.elapsedTimer = this.ownerWindow.setInterval(() => this.paintProgress(), 1e3);
       return;
     }
-    const succeeded = this.phase === "success";
-    this.card.setAttribute("role", "dialog");
-    this.card.setAttribute("aria-modal", "true");
-    this.titleEl.textContent = succeeded ? this.configuration.successTitle ?? "处理完成" : this.configuration.errorTitle ?? "处理没有完成";
-    const successDetail = typeof this.configuration.successDetail === "function" ? this.configuration.successDetail(this.result) : this.configuration.successDetail;
-    this.bodyEl.createEl("p", { cls: "mind-trace-dialog-body", text: succeeded ? successDetail ?? "相关内容已经更新。" : this.error ?? "发生未知错误。" });
-    let primary;
-    if (!succeeded) {
-      const closeButton = this.actionsEl.createEl("button", { text: "关闭", attr: { type: "button" } });
-      closeButton.addEventListener("click", () => this.close());
-      const retry = this.actionsEl.createEl("button", { cls: "mod-cta", text: "重试", attr: { type: "button" } });
-      retry.addEventListener("click", () => void this.start());
-      primary = retry;
-    } else if (this.configuration.onViewResult !== void 0 || this.configuration.successLabel) {
-      const view = this.actionsEl.createEl("button", { cls: "mod-cta", text: this.configuration.successLabel ?? "查看结果", attr: { type: "button" } });
-      view.addEventListener("click", () => {
-        const result = this.result;
-        this.close();
-        this.configuration.onViewResult?.(result);
-      });
-      primary = view;
-    } else {
-      const done = this.actionsEl.createEl("button", { cls: "mod-cta", text: "完成", attr: { type: "button" } });
-      done.addEventListener("click", () => this.close());
-      primary = done;
-    }
-    const onKey = (event) => {
-      if (event.key === "Escape") {
-        this.close();
-      }
-    };
-    this.keyHandler = onKey;
-    this.ownerDocument.addEventListener("keydown", onKey);
-    const onBackdrop = (event) => {
-      if (event.target === this.host) {
-        this.close();
-      }
-    };
-    this.host.addEventListener("click", onBackdrop);
-    this.backdropHandler = onBackdrop;
-    this.ownerWindow.requestAnimationFrame(() => primary.focus({ preventScroll: true }));
   }
 };
 function openMindTraceOperation(app, plugin, configuration) {
@@ -1052,10 +1073,11 @@ var SavedObservationView = class extends import_obsidian7.TextFileView {
       const edit = actions.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
       edit.addEventListener("click", () => { if (this.file) void this.plugin.openProtectedMarkdownSource(this.leaf, this.file); });
       const latest = actions.createEl("button", { cls: "mod-cta", text: "基于最新来源重新观照", attr: { type: "button" } });
-      latest.addEventListener("click", async () => {
-        await this.plugin.openJournal();
-        const view = this.app.workspace.getLeavesOfType(JOURNAL_VIEW_TYPE)[0]?.view;
-        if (view instanceof JournalView) view.setMode("observation");
+      latest.addEventListener("click", () => {
+        void this.plugin.openJournal().then(() => {
+          const view = this.app.workspace.getLeavesOfType(JOURNAL_VIEW_TYPE)[0]?.view;
+          if (view instanceof JournalView) view.setMode("observation");
+        });
       });
       const remove = actions.createEl("button", { text: "删除", attr: { type: "button" } });
       remove.addEventListener("click", () => {

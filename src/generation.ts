@@ -262,7 +262,7 @@ var EventEditor = class {
     }
     this.render();
     this.notify();
-    (this.container.querySelector(".mind-trace-event-title-input:last-of-type") as HTMLElement | null)?.focus();
+    this.container.querySelector<HTMLElement>(".mind-trace-event-title-input:last-of-type")?.focus();
   }
   render() {
     this.container.empty();
@@ -418,7 +418,7 @@ var EventEditor = class {
         addTrace.addEventListener("click", () => {
           event.traces.push({ kind: "emotion", layer: "self_report", certainty: "stated", text: "", evidence: "" });
           renderTraces();
-          (tracesHost.querySelector(".mind-trace-event-trace-row:last-of-type input") as HTMLElement | null)?.focus();
+          tracesHost.querySelector<HTMLInputElement>(".mind-trace-event-trace-row:last-of-type input")?.focus();
         });
       };
       card.createDiv({ cls: "mind-trace-event-editor-subtitle", text: "事件论元" });
@@ -478,7 +478,7 @@ var EventEditor = class {
         addElement.addEventListener("click", () => {
           event.arguments.push({ role: "related", label: "相关", entity: { kind: "topic", name: "" } });
           renderArguments();
-          (argumentsHost.querySelector(".mind-trace-event-element-row:last-of-type input") as HTMLElement | null)?.focus();
+          argumentsHost.querySelector<HTMLInputElement>(".mind-trace-event-element-row:last-of-type input")?.focus();
         });
       };
       card.createDiv({ cls: "mind-trace-event-editor-subtitle", text: "明确关系（可选）" });

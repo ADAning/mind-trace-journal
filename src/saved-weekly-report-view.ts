@@ -80,7 +80,7 @@ function validWeeklyMetricValue(value, unit = null) {
   if (normalized === "—") {
     return normalized;
   }
-  const unitPattern = unit === "天" || unit === "周" ? `(?:\\s*${unit})?` : "";
+  const unitPattern = unit === "天" || unit === "周" || unit === "份" ? `(?:\\s*${unit})?` : "";
   const pattern = new RegExp(`^[+-]?\\d+(?:\\.\\d+)?${unitPattern}$`);
   if (!pattern.test(normalized)) {
     throw new Error(`报告数字格式无法识别：${normalized}`);
@@ -333,12 +333,12 @@ function parseMonthlyMetrics(section) {
     if (cells.length !== 3) {
       continue;
     }
-    const labels = { "记录日": "days", "活跃周": "activeWeeks", "心情": "mood", "精力": "energy", "压力": "stress" };
+    const labels = { "记录日": "days", "活跃周": "activeWeeks", "已生成周报": "activeWeeks", "心情": "mood", "精力": "energy", "压力": "stress" };
     const key = labels[cells[0]];
     if (key === void 0) {
       continue;
     }
-    const unit = key === "days" ? "天" : key === "activeWeeks" ? "周" : null;
+    const unit = key === "days" ? "天" : key === "activeWeeks" ? cells[0] === "已生成周报" ? "份" : "周" : null;
     parsed[key] = { key, label: cells[0], current: validWeeklyMetricValue(cells[1], unit), delta: validWeeklyMetricValue(cells[2], unit) };
   }
   for (const key of ["mood", "energy", "stress"]) {
@@ -865,7 +865,7 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
   const zoomReset = toolbar.createEl("button", { text: "适合", attr: { type: "button", "aria-label": "重置图谱视图", title: "适合画布" } });
   const zoomIn = toolbar.createEl("button", { attr: { type: "button", "aria-label": "放大图谱", title: "放大" } });
   (0, import_obsidian4.setIcon)(zoomIn, "plus");
-  const svg = svgElement(container, "svg", { viewBox: `0 0 ${width} ${height}`, role: "group", tabindex: "0", "aria-label": options.ariaLabel ?? "事件与论元记忆星图" });
+  const svg = svgElement(container, "svg", { viewBox: `0 0 ${width} ${height}`, role: "group", "aria-label": options.ariaLabel ?? "事件与论元记忆星图" });
   svg.classList.add("mind-trace-memory-star");
   const viewport = svgElement(container, "g", { class: "mind-trace-memory-viewport" });
   const edgeLayer = svgElement(container, "g", { class: "mind-trace-memory-edge-layer" });
@@ -896,7 +896,7 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
   for (const record of visibleRecords) {
     const point = eventPositions.get(record.id);
     if (point === void 0) continue;
-    const node = svgElement(container, "g", { class: `mind-trace-memory-event-node is-${record.type ?? "other"}`, "data-event": record.id, tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${EVENT_TYPE_LABELS[record.type] ?? "事件"}：${record.title}` });
+    const node = svgElement(container, "g", { class: `mind-trace-memory-event-node is-${record.type ?? "other"}`, "data-event": record.id, tabindex: "-1", role: "button", "aria-pressed": "false", "aria-label": `${EVENT_TYPE_LABELS[record.type] ?? "事件"}：${record.title}` });
     node.append(svgElement(container, "rect", { x: String(point.x - 68), y: String(point.y - 27), width: "136", height: "54", rx: "17" }));
     const type = svgElement(container, "text", { x: String(point.x), y: String(point.y - 7), "text-anchor": "middle", class: "mind-trace-memory-event-type" });
     type.textContent = EVENT_TYPE_LABELS[record.type] ?? "事件";
@@ -910,7 +910,7 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
   for (const entity of entities.values()) {
     const point = entityPositions.get(entity.key);
     if (point === void 0) continue;
-    const node = svgElement(container, "g", { class: `mind-trace-memory-entity-node is-${entity.kind}`, "data-entity": entity.key, tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${EVENT_KIND_LABELS[entity.kind]} ${entity.name}，参与 ${entity.eventIds.size} 件事件` });
+    const node = svgElement(container, "g", { class: `mind-trace-memory-entity-node is-${entity.kind}`, "data-entity": entity.key, tabindex: "-1", role: "button", "aria-pressed": "false", "aria-label": `${EVENT_KIND_LABELS[entity.kind]} ${entity.name}，参与 ${entity.eventIds.size} 件事件` });
     const radius = Math.min(25, 15 + entity.eventIds.size * 2);
     if (["organization", "project", "product"].includes(entity.kind)) {
       node.append(svgElement(container, "rect", { x: String(point.x - radius), y: String(point.y - radius), width: String(radius * 2), height: String(radius * 2), rx: entity.kind === "organization" ? "5" : "10" }));
@@ -931,6 +931,19 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
   stage.append(svg);
   let activeEvent = visibleRecords.some((record) => record.id === options.initialState?.activeEvent) ? options.initialState.activeEvent : null;
   let activeEntity = entities.has(options.initialState?.activeEntity) ? options.initialState.activeEntity : null;
+  const interactiveNodes = [...eventNodes, ...entityNodes];
+  const rovingStart = interactiveNodes.find((node) => node.getAttribute("data-event") === activeEvent || node.getAttribute("data-entity") === activeEntity) ?? interactiveNodes[0];
+  rovingStart?.setAttribute("tabindex", "0");
+  const setRovingNode = (node, focus = false) => {
+    for (const candidate of interactiveNodes) candidate.setAttribute("tabindex", candidate === node ? "0" : "-1");
+    if (focus) node.focus();
+  };
+  const moveNodeFocus = (node, offset) => {
+    const index = interactiveNodes.indexOf(node);
+    if (index < 0 || interactiveNodes.length === 0) return;
+    const target = interactiveNodes[(index + offset + interactiveNodes.length) % interactiveNodes.length];
+    setRovingNode(target, true);
+  };
   const timeText = (record) => typeof record.time === "string" && /^\d{2}:\d{2}/.test(record.time) ? record.time.slice(0, 5) : "未记录具体时间";
   const renderInspector = () => {
     inspector.empty();
@@ -1046,6 +1059,7 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
     };
     node.addEventListener("click", (event) => {
       event.stopPropagation();
+      setRovingNode(node);
       activate();
     });
     node.addEventListener("keydown", (event) => {
@@ -1056,6 +1070,15 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
         activeEvent = null;
         activeEntity = null;
         paint();
+      } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        event.preventDefault();
+        moveNodeFocus(node, 1);
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        event.preventDefault();
+        moveNodeFocus(node, -1);
+      } else if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        setRovingNode(event.key === "Home" ? interactiveNodes[0] : interactiveNodes[interactiveNodes.length - 1], true);
       }
     });
   };
@@ -1104,6 +1127,7 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
     };
   };
   svg.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     const point = svgPointFromClient(event.clientX, event.clientY);
     zoomAround(event.deltaY < 0 ? 1.12 : 0.89, point.x, point.y);
@@ -1383,7 +1407,7 @@ function renderSavedV4Report(container, report, options: any = {}) {
   ledger.createEl("time", { text: `${report.periodStart.slice(5).replace("-", ".")}\n—\n${report.periodEnd.slice(5).replace("-", ".")}` });
   const ledgerStats = ledger.createDiv({ cls: "mind-trace-weekly-ledger-stats" });
   const stats = [["记录日", String(report.sourceDays)], ["总篇数", String(report.sourceSessions)]];
-  if (monthly) stats.push(["活跃周", String(report.activeWeeks ?? 0)]);
+  if (monthly) stats.push(["已生成周报", String(report.activeWeeks ?? 0)]);
   for (const [label, value] of stats) {
     const item = ledgerStats.createDiv();
     item.createSpan({ text: label });
@@ -1397,7 +1421,7 @@ function renderSavedV4Report(container, report, options: any = {}) {
   if (monthly) {
     overviewIndex.createSpan({ text: `${report.turningPoints?.length ?? 0} 个跨周转折` });
     overviewIndex.createSpan({ text: `${report.themeEvolution?.length ?? 0} 条主题演变` });
-    overviewIndex.createSpan({ text: `${report.activeWeeks ?? 0} 个活跃周` });
+    overviewIndex.createSpan({ text: `${report.activeWeeks ?? 0} 份已生成周报` });
   } else {
     overviewIndex.createSpan({ text: `${report.highlights?.length ?? 0} 件本周发生` });
     overviewIndex.createSpan({ text: `${report.openLoops?.length ?? 0} 个未决事项` });
@@ -1434,7 +1458,7 @@ function renderSavedV4Report(container, report, options: any = {}) {
       for (const [key, label] of [["mood", "心"], ["energy", "精"], ["stress", "压"]]) {
         const score = week[key];
         const bar = bars.createDiv({ cls: `mind-trace-monthly-rhythm-bar is-${key}`, attr: { title: `${label} ${score === null ? "无数据" : Number(score).toFixed(1)}` } });
-        bar.style.setProperty("--mind-trace-rhythm-value", score === null ? "0" : String(score));
+        bar.setCssProps({ "--mind-trace-rhythm-value": score === null ? "0" : String(score) });
       }
       item.createDiv({ cls: "mind-trace-monthly-rhythm-meta", text: `${week.days} 天 · ${week.sessions} 篇` });
     }
@@ -1614,7 +1638,7 @@ function renderSavedMonthlyReport(container, report, options: any = {}) {
   const header = shell.createEl("header", { cls: "mind-trace-saved-header mind-trace-weekly-header mind-trace-monthly-header" });
   header.createDiv({ cls: "mind-trace-eyebrow", text: `心迹月报 · ${report.periodStatus === "partial" ? "截至今天" : "已生成"}` });
   header.createEl("h1", { cls: "mind-trace-journal-title", text: `${report.periodStart} — ${report.periodEnd}` });
-  header.createEl("p", { text: `${report.sourceDays} 个记录日 · ${report.sourceSessions} 篇记录 · ${report.activeWeeks} 个活跃自然周 · ${weeklyGeneratedAtText(report.generatedAt)}` });
+  header.createEl("p", { text: `${report.sourceDays} 个记录日 · ${report.sourceSessions} 篇记录 · ${report.activeWeeks} 份已生成周报 · ${weeklyGeneratedAtText(report.generatedAt)}` });
   const actions = header.createDiv({ cls: "mind-trace-saved-header-actions" });
   if (options.onRegenerate !== void 0) {
     const regenerate = actions.createEl("button", { cls: "mind-trace-export-pdf mind-trace-report-regenerate", text: options.busy ? "正在生成…" : "重新生成", attr: { type: "button" } });
@@ -1643,7 +1667,7 @@ function renderSavedMonthlyReport(container, report, options: any = {}) {
   ledger.createDiv({ cls: "mind-trace-section-kicker", text: report.periodStatus === "partial" ? "本月预览 · 截至今天" : "整月账页" });
   ledger.createEl("time", { text: `${report.periodStart.slice(5).replace("-", ".")}\n—\n${report.periodEnd.slice(5).replace("-", ".")}` });
   const ledgerStats = ledger.createDiv({ cls: "mind-trace-weekly-ledger-stats" });
-  for (const [label, value] of [["记录日", String(report.sourceDays)], ["总篇数", String(report.sourceSessions)], ["活跃周", String(report.activeWeeks)]]) {
+  for (const [label, value] of [["记录日", String(report.sourceDays)], ["总篇数", String(report.sourceSessions)], ["已生成周报", String(report.activeWeeks)]]) {
     const item = ledgerStats.createDiv();
     item.createSpan({ text: label });
     item.createEl("strong", { text: value });
@@ -1655,7 +1679,7 @@ function renderSavedMonthlyReport(container, report, options: any = {}) {
   const monthlyIndex = foldBody.createDiv({ cls: "mind-trace-weekly-overview-index", attr: { role: "list", "aria-label": "本月回顾索引" } });
   monthlyIndex.createSpan({ text: `${Array.isArray(report.changes) ? report.changes.length : 0} 条变化` });
   monthlyIndex.createSpan({ text: `${Array.isArray(report.themes) ? report.themes.length : 0} 个主题` });
-  monthlyIndex.createSpan({ text: `${Number(report.activeWeeks) || 0} 个活跃周` });
+  monthlyIndex.createSpan({ text: `${Number(report.activeWeeks) || 0} 份已生成周报` });
   const metricsSection = shell.createEl("section", { cls: "mind-trace-rating-comparison mind-trace-weekly-metrics mind-trace-monthly-metrics" });
   const metricsHeading = metricsSection.createDiv({ cls: "mind-trace-rating-comparison-heading" });
   const metricsCopy = metricsHeading.createDiv();
@@ -1685,7 +1709,7 @@ function renderSavedMonthlyReport(container, report, options: any = {}) {
     for (const [key, label] of [["mood", "心"], ["energy", "精"], ["stress", "压"]]) {
       const value = week[key];
       const bar = bars.createDiv({ cls: `mind-trace-monthly-rhythm-bar is-${key}`, attr: { title: `${label} ${value === null ? "无数据" : value.toFixed(1)}` } });
-      bar.style.setProperty("--mind-trace-rhythm-value", value === null ? "0" : String(value));
+      bar.setCssProps({ "--mind-trace-rhythm-value": value === null ? "0" : String(value) });
     }
     item.createDiv({ cls: "mind-trace-monthly-rhythm-meta", text: `${week.days} 天 · ${week.sessions} 篇` });
   }

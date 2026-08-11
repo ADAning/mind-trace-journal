@@ -2,7 +2,7 @@
 import * as import_obsidian5 from "obsidian";
 import { CORE_QUESTIONS, DEFAULT_SETTINGS, configuredAdaptiveQuestionLimit, configuredCoreQuestions } from "./defaults";
 import { errorMessage, showMindTraceFieldError } from "./journal-view";
-import { MindTraceConfirmModal, attachLlmActivityStatus, captureMindTraceContext, isChatCompletionsProvider, openMindTraceOperation, restoreMindTraceContext } from "./providers";
+import { attachLlmActivityStatus, captureMindTraceContext, isChatCompletionsProvider, openMindTraceOperation, restoreMindTraceContext } from "./providers";
 import { mindTraceWindow, showMindTraceNotice } from "./runtime-preamble";
 import { normalizeReportFolderValue, observationFolder, resolveReportFolder } from "./weekly-report";
 
@@ -61,7 +61,7 @@ var PrivacyPasswordModal = class extends import_obsidian5.Modal {
     contentEl.createDiv({ cls: "mind-trace-dialog-title", text: configured ? "管理心迹密码" : "设置心迹密码" });
     contentEl.createEl("p", {
       cls: "mind-trace-dialog-body",
-      text: "密码只保护心迹插件界面，不会加密 Vault 中的 Markdown 原文。"
+      text: "密码只保护心迹插件界面，不会加密 vault 中的 Markdown 原文。"
     });
     const form = contentEl.createEl("form", { cls: "mind-trace-password-form" });
     let current = null;
@@ -174,30 +174,12 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  get ownerWindow() {
-    return mindTraceWindow(this.containerEl);
-  }
   connectionTestBusy = false;
   display(preserveContext = false) {
     const { containerEl } = this;
     const context = preserveContext ? captureMindTraceContext(containerEl) : null;
     containerEl.empty();
     containerEl.addClass("mind-trace-settings");
-    const header = containerEl.createDiv({
-      cls: "mind-trace-settings-header"
-    });
-    header.createDiv({
-      cls: "mind-trace-eyebrow",
-      text: "心迹 \xB7 偏好"
-    });
-    header.createDiv({
-      cls: "mind-trace-settings-title",
-      text: "让记录更像你",
-      attr: { role: "heading", "aria-level": "2" }
-    });
-    header.createEl("p", {
-      text: "选择模型、反思方式和日记保存习惯。修改会自动保存。"
-    });
     const providerSection = this.createSection(
       "模型与连接",
       "用于个性化追问、整理日记和生成反思。"
@@ -210,7 +192,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       "决定日记保存在哪里，以及心迹如何回应你。"
     );
     const reportFolderDescriptionUpdates = [];
-    new import_obsidian5.Setting(journalSection).setName("日记目录").setDesc("心迹日记在当前 Vault 中的保存目录").addText(
+    new import_obsidian5.Setting(journalSection).setName("日记目录").setDesc("心迹日记在当前 vault 中的保存目录").addText(
       (text) => text.setPlaceholder("心迹日记").setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
         this.plugin.settings.journalFolder = value.trim();
         await this.plugin.saveSettings();
@@ -399,14 +381,14 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     }));
     const minimumWeeks = Math.min(5, Math.max(1, Number(this.plugin.settings.monthlyReportMinimumWeeks) || 4));
     this.plugin.settings.monthlyReportMinimumWeeks = minimumWeeks;
-    const minimumMonthSetting = new import_obsidian5.Setting(analysisSection).setName("月报最低活跃周").setDesc(
-      `当前为 ${minimumWeeks} 周；完整月需要不同周一至周日区间各有至少一天记录`
+    const minimumMonthSetting = new import_obsidian5.Setting(analysisSection).setName("月报最低周报数").setDesc(
+      `当前为 ${minimumWeeks} 份；完整自然月达到该数量的已生成周报后，才会生成正式月报`
     );
     minimumMonthSetting.addSlider((slider) => {
       slider.sliderEl.setAttribute("data-mind-trace-focus-key", "monthly-minimum-weeks");
       return slider.setLimits(1, 5, 1).setValue(minimumWeeks).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.monthlyReportMinimumWeeks = value;
-        minimumMonthSetting.setDesc(`当前为 ${value} 周；完整月需要不同周一至周日区间各有至少一天记录`);
+        minimumMonthSetting.setDesc(`当前为 ${value} 份；完整自然月达到该数量的已生成周报后，才会生成正式月报`);
         await this.plugin.saveSettings();
         this.plugin.refreshJournalViews();
       });
@@ -465,105 +447,6 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
           successLabel: "返回设置",
           backgroundSuccess: "心迹草稿已清除"
         });
-      })
-    );
-    const debugSection = this.createSection(
-      "开发者调试",
-      "仅用于排查弹窗布局与交互；演示任务不会修改任何数据。密码弹窗为真实弹窗，操作会真实生效。"
-    );
-    new import_obsidian5.Setting(debugSection).setName("确认弹窗").setDesc("触发示例确认弹窗，确认后仅提示，不执行操作").addButton(
-      (button) => button.setButtonText("触发确认弹窗").onClick(() => {
-        new MindTraceConfirmModal(this.app, this.plugin, {
-          eyebrow: "调试 · 确认",
-          title: "这是确认弹窗示例",
-          description: "用于调试确认弹窗的布局与按钮。",
-          confirmLabel: "确认",
-          stages: ["步骤一：演示", "步骤二：无实际操作"]
-        }, () => showMindTraceNotice("确认弹窗已触发（无实际操作）")).open();
-      })
-    );
-    new import_obsidian5.Setting(debugSection).setName("密码弹窗").setDesc("打开真实密码弹窗，可设置、移除或取消").addButton(
-      (button) => button.setButtonText("触发密码弹窗").onClick(() => {
-        new PrivacyPasswordModal(this.app, this.plugin, () => this.display(true)).open();
-      })
-    );
-    new import_obsidian5.Setting(debugSection).setName("任务浮窗 · 有去向成功").setDesc("约 3 秒分阶段进度，完成后显示“查看报告”").addButton(
-      (button) => button.setButtonText("触发有去向成功").onClick(() => {
-        openMindTraceOperation(this.app, this.plugin, {
-          confirm: false,
-          eyebrow: "调试 · 任务",
-          title: "演示长任务",
-          stages: ["准备内容", "执行步骤", "收尾"],
-          run: async (update) => {
-            update({ stage: 1, total: 3, title: "准备内容", detail: "演示中…" });
-            await new Promise((resolve) => this.ownerWindow.setTimeout(resolve, 900));
-            update({ stage: 2, total: 3, title: "执行步骤", detail: "演示中…" });
-            await new Promise((resolve) => this.ownerWindow.setTimeout(resolve, 900));
-            update({ stage: 3, total: 3, title: "收尾", detail: "演示中…" });
-            await new Promise((resolve) => this.ownerWindow.setTimeout(resolve, 900));
-          },
-          successTitle: "调试任务完成",
-          successDetail: "演示任务没有修改任何数据。",
-          successLabel: "查看报告",
-          onViewResult: () => showMindTraceNotice("查看报告按钮已触发（无实际操作）")
-        });
-      })
-    );
-    new import_obsidian5.Setting(debugSection).setName("任务浮窗 · 无去向成功").setDesc("瞬时完成，结果框只显示“完成”").addButton(
-      (button) => button.setButtonText("触发无去向成功").onClick(() => {
-        openMindTraceOperation(this.app, this.plugin, {
-          confirm: false,
-          eyebrow: "调试 · 任务",
-          title: "演示瞬时任务",
-          stages: ["完成"],
-          run: async (update) => {
-            update({ stage: 1, total: 1, title: "完成", detail: "演示中…" });
-          },
-          successTitle: "调试任务完成",
-          successDetail: "演示任务没有修改任何数据。"
-        });
-      })
-    );
-    new import_obsidian5.Setting(debugSection).setName("任务浮窗 · 失败").setDesc("第二阶段抛出演示错误，显示“关闭 + 重试”").addButton(
-      (button) => button.setButtonText("触发失败结果框").onClick(() => {
-        openMindTraceOperation(this.app, this.plugin, {
-          confirm: false,
-          eyebrow: "调试 · 任务",
-          title: "演示失败任务",
-          stages: ["开始", "失败"],
-          run: async (update) => {
-            update({ stage: 1, total: 2, title: "开始", detail: "演示中…" });
-            await new Promise((resolve) => this.ownerWindow.setTimeout(resolve, 500));
-            update({ stage: 2, total: 2, title: "失败", detail: "准备抛出演示错误…" });
-            await new Promise((resolve) => this.ownerWindow.setTimeout(resolve, 300));
-            throw new Error("这是演示错误，用于调试失败结果框。");
-          },
-          errorTitle: "调试任务失败",
-          onError: () => {}
-        });
-      })
-    );
-    new import_obsidian5.Setting(debugSection).setName("任务浮窗 · 后台完成").setDesc("启动慢任务后自动最小化，完成后只弹 Notice").addButton(
-      (button) => button.setButtonText("触发后台完成").onClick(() => {
-        const toast = openMindTraceOperation(this.app, this.plugin, {
-          confirm: false,
-          eyebrow: "调试 · 任务",
-          title: "演示后台任务",
-          stages: ["后台执行"],
-          run: async (update) => {
-            update({ stage: 1, total: 1, title: "后台执行", detail: "演示中…" });
-            await new Promise((resolve) => this.ownerWindow.setTimeout(resolve, 2500));
-          },
-          successTitle: "后台任务完成",
-          successDetail: "演示任务没有修改任何数据。",
-          backgroundSuccess: "后台调试任务已完成"
-        });
-        this.ownerWindow.setTimeout(() => toast?.minimize(), 600);
-      })
-    );
-    new import_obsidian5.Setting(debugSection).setName("Notice").setDesc("演示一条轻量通知").addButton(
-      (button) => button.setButtonText("触发 Notice").onClick(() => {
-        showMindTraceNotice("调试 Notice：这是一条轻提示");
       })
     );
     if (context !== null) {
@@ -785,15 +668,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     const section = this.containerEl.createEl("section", {
       cls: "mind-trace-settings-section"
     });
-    const heading = section.createDiv({
-      cls: "mind-trace-settings-section-heading"
-    });
-    heading.createDiv({
-      cls: "mind-trace-settings-section-title",
-      text: title,
-      attr: { role: "heading", "aria-level": "3" }
-    });
-    heading.createEl("p", { text: description });
+    new import_obsidian5.Setting(section).setName(title).setDesc(description).setClass("mind-trace-settings-section-heading").setHeading();
     return section;
   }
   renderProviderCard(container) {
@@ -869,14 +744,14 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         });
       });
     }
-    const credentialSetting = new import_obsidian5.Setting(container).setName("API Key").setDesc(this.plugin.activeCredentialStatus());
+    const credentialSetting = new import_obsidian5.Setting(container).setName("API key").setDesc(this.plugin.activeCredentialStatus());
     const refreshCredentialStatus = () => {
       credentialSetting.setDesc(this.plugin.activeCredentialStatus());
     };
     if (kind === "openai-compatible") {
       credentialSetting.addDropdown((dropdown) => {
         dropdown.selectEl.setAttribute("data-mind-trace-focus-key", "credential-source");
-        dropdown.addOption("secret-storage", "Obsidian Secret Storage").addOption("none", "无需鉴权");
+        dropdown.addOption("secret-storage", "Obsidian secret storage").addOption("none", "无需鉴权");
         dropdown.setValue(configuration.credentialSource).onChange(async (value) => {
           configuration.credentialSource = value;
           await this.plugin.saveProviderSettings();

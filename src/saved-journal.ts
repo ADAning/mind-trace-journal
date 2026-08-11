@@ -96,7 +96,7 @@ function parseEventTraces(eventBlock) {
     const certainty = EVENT_TRACE_CERTAINTIES.includes(certaintyText) ? certaintyText : "stated";
     const start = match.index + match[0].length;
     const end = matches[index + 1]?.index ?? eventBlock.length;
-    const evidence = parseEventMarkdownText(/^  - 依据：(.+)$/m.exec(eventBlock.slice(start, end))?.[1] ?? "");
+    const evidence = parseEventMarkdownText(/^ {2}- 依据：(.+)$/m.exec(eventBlock.slice(start, end))?.[1] ?? "");
     return {
       kind,
       layer: EVENT_TRACE_KIND_LAYERS[kind],
@@ -927,29 +927,6 @@ function eventElementKey(element) {
 function eventArgumentKey(argument) {
   return eventElementKey(argument.entity);
 }
-function eventElementStats(events) {
-  const stats = /* @__PURE__ */ new Map();
-  events.forEach((event, eventIndex) => {
-    for (const element of event.elements) {
-      const key = eventElementKey(element);
-      const current = stats.get(key) ?? { key, kind: element.kind, name: element.name, eventIndexes: /* @__PURE__ */ new Set(), first: eventIndex };
-      current.eventIndexes.add(eventIndex);
-      stats.set(key, current);
-    }
-  });
-  return [...stats.values()].sort((left, right) => right.eventIndexes.size - left.eventIndexes.size || left.first - right.first || left.name.localeCompare(right.name));
-}
-function journalEventRecords(document2, filePath = "") {
-  return flattenHistoryEventRecords((document2?.sessions ?? []).map((session, sessionIndex) => ({
-    filePath,
-    sessionIndex,
-    date: document2?.date ?? "",
-    time: session?.time ?? "",
-    themes: session?.themes ?? [],
-    facets: session?.facets ?? [],
-    events: session?.events ?? []
-  })));
-}
 function normalizeTrajectoryEvent(raw) {
   const event = normalizeEvent(raw);
   const entities = new Map();
@@ -1393,9 +1370,8 @@ function renderSession(container, session, options: any = {}) {
   const marginEvents = (Array.isArray(eventSession.events) ? eventSession.events : []).map((event) => String(event?.title ?? event?.summary ?? "").trim()).filter((title) => title.length > 0).slice(0, 2);
   const marginThemes = (Array.isArray(session.themes) ? session.themes : []).map((theme) => String(theme ?? "").trim()).filter((theme) => theme.length > 0).slice(0, 3);
   if (marginEvents.length > 0 || marginThemes.length > 0) {
-    diaryWriting.addClass("has-margin");
-    const margin = diaryWriting.createDiv({ cls: "mind-trace-diary-margin" });
-    margin.createDiv({ cls: "mind-trace-diary-margin-title", text: "正文旁注" });
+    const margin = diarySection.createDiv({ cls: "mind-trace-diary-margin mind-trace-diary-notes" });
+    margin.createDiv({ cls: "mind-trace-diary-margin-title", text: "正文线索" });
     const list = margin.createEl("ul");
     for (const title of marginEvents) list.createEl("li", { cls: "is-event", text: `事件 · ${title}` });
     for (const theme of marginThemes) list.createEl("li", { cls: "is-theme", text: `主题 · ${theme}` });
@@ -2088,7 +2064,7 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
     this.eventSaveError = "";
     this.render(true);
     this.ownerWindow.requestAnimationFrame(() => {
-      (this.contentEl.querySelector(".mind-trace-saved-event-editor .mind-trace-event-title-input") as HTMLElement | null)?.focus();
+      this.contentEl.querySelector<HTMLInputElement>(".mind-trace-saved-event-editor .mind-trace-event-title-input")?.focus();
     });
   }
   cancelEventEditing(render = true) {
