@@ -1,6 +1,5 @@
 // src/saved-weekly-report-view.ts
-import * as import_obsidian3 from "obsidian";
-import * as import_obsidian4 from "obsidian";
+import * as obsidian from "obsidian";
 import { EVENT_KINDS, EVENT_KIND_LABELS, EVENT_LABEL_KINDS, EVENT_RELATION_LABEL_VALUES, EVENT_ROLES, EVENT_ROLE_LABEL_VALUES, EVENT_STATUSES, EVENT_STATUS_LABELS, EVENT_STATUS_LABEL_VALUES, EVENT_TYPE_LABELS, EVENT_TYPE_LABEL_VALUES, validateEvents } from "./conversation";
 import { svgElement } from "./dashboard";
 import { localDateString, localDayOrdinal, parseLocalDate } from "./date-utils";
@@ -861,10 +860,10 @@ function renderMemoryStarGraph(container, aggregate, options: any = {}) {
   const inspector = shell.createEl("aside", { cls: "mind-trace-memory-inspector", attr: { "aria-live": "polite", "aria-label": "图谱节点详情" } });
   const toolbar = stage.createDiv({ cls: "mind-trace-memory-toolbar", attr: { "aria-label": "图谱缩放工具" } });
   const zoomOut = toolbar.createEl("button", { attr: { type: "button", "aria-label": "缩小图谱", title: "缩小" } });
-  (0, import_obsidian4.setIcon)(zoomOut, "minus");
+  (0, obsidian.setIcon)(zoomOut, "minus");
   const zoomReset = toolbar.createEl("button", { text: "适合", attr: { type: "button", "aria-label": "重置图谱视图", title: "适合画布" } });
   const zoomIn = toolbar.createEl("button", { attr: { type: "button", "aria-label": "放大图谱", title: "放大" } });
-  (0, import_obsidian4.setIcon)(zoomIn, "plus");
+  (0, obsidian.setIcon)(zoomIn, "plus");
   const svg = svgElement(container, "svg", { viewBox: `0 0 ${width} ${height}`, role: "group", "aria-label": options.ariaLabel ?? "事件与论元记忆星图" });
   svg.classList.add("mind-trace-memory-star");
   const viewport = svgElement(container, "g", { class: "mind-trace-memory-viewport" });
@@ -1283,7 +1282,7 @@ function renderWeeklyEventCenter(container, report, options: any = {}) {
   ledgerDetails.open = options.ledgerOpen === true;
   ledgerDetails.addEventListener("toggle", () => options.onLedgerToggle?.(ledgerDetails.open));
   const ledgerSummary = ledgerDetails.createEl("summary");
-  (0, import_obsidian4.setIcon)(ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
+  (0, obsidian.setIcon)(ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
   const ledgerSummaryTitle = ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-title", text: "完整事件账" });
   const ledgerSummaryCount = ledgerSummary.createSpan({ cls: "mind-trace-event-ledger-disclosure-count", text: `${aggregate.records.length} 件` });
   const ledgerHost = ledgerDetails.createDiv({ cls: "mind-trace-weekly-event-ledger-host" });
@@ -1768,7 +1767,7 @@ function renderSavedMonthlyReport(container, report, options: any = {}) {
   questionBody.createDiv({ cls: "mind-trace-saved-copy mind-trace-compact-editor", text: report.selfQuestion });
   if (report.truncated) shell.createEl("p", { cls: "mind-trace-weekly-truncated", text: "本月日记较长，AI 分析使用了截取后的摘录。" });
 }
-var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
+var SavedWeeklyReportView = class extends obsidian.TextFileView {
   declare plugin: any;
   constructor(leaf, plugin) {
     super(leaf);
@@ -2003,7 +2002,7 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       description: `将把 ${candidates.length} 篇记录的日记正文、切片和已有事件发送给 ${providerLabel}，统一进展、体验/方向线索、实体与关系；不会发送原始问答。`,
       confirmLabel: "开始整理",
       stages: [`收集${scope}事件`, "校准图谱事件", "逐篇写回日记", "重新读取事件", "生成并更新图谱"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.backfillBusy = true;
         this.backfillMessage = `正在后台用${monthly ? "自然周片段" : "整周上下文"}整理 ${candidates.length} 篇记录。`;
         this.refreshEventCenter(report);
@@ -2011,7 +2010,7 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
         const repository = monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository;
         const latestSource = await repository.collect(period);
-        const calibrated = monthly ? await this.plugin.calibrateMonthlyEvents(latestSource, update) : await this.plugin.calibrateWeeklyEvents(latestSource, update);
+        const calibrated = monthly ? await this.plugin.calibrateMonthlyEvents(latestSource, update, void 0, signal) : await this.plugin.calibrateWeeklyEvents(latestSource, update, void 0, signal);
         update({ stage: 5, total: 5, title: "生成并更新图谱", detail: "正在构建新的图谱布局并恢复当前浏览位置。" });
         this.eventSource = calibrated;
         this.eventError = "";
@@ -2035,6 +2034,11 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         }
         this.refreshEventCenter(report);
       },
+      onCancel: () => {
+        this.backfillBusy = false;
+        this.backfillMessage = "";
+        this.refreshEventCenter(report);
+      },
       successTitle: `${scope}图谱已经整理完成`,
       successDetail: `已校准 ${candidates.length} 篇记录，并根据写回后的事件重新生成图谱。`,
       successLabel: "查看图谱",
@@ -2055,7 +2059,7 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       description: `将把结构不匹配记录的日记正文与切片发送给 ${providerLabel}${monthly ? "，并按自然周分组抽取" : ""}；已有效的事件只用于统一命名和控制每周数量，不会被改写，也不会发送原始问答。`,
       confirmLabel: "批量重新生成",
       stages: [`收集${scope}异常记录`, monthly ? "按自然周重新抽取" : "重新抽取事件", "校验并逐篇写回", "重新汇总图谱"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.backfillBusy = true;
         this.backfillMessage = `正在批量重新生成 ${candidates.length} 篇结构不匹配的事件。`;
         this.refreshEventCenter(report);
@@ -2063,7 +2067,7 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         const period = { type: monthly ? "monthly" : "weekly", start: report.periodStart, end: report.periodEnd, status: report.periodStatus ?? "complete" };
         const repository = monthly ? this.plugin.monthlyReportRepository : this.plugin.weeklyReportRepository;
         const latestSource = await repository.collect(period);
-        const regenerated = await this.plugin.regenerateInvalidEvents(latestSource, update);
+        const regenerated = await this.plugin.regenerateInvalidEvents(latestSource, update, void 0, signal);
         this.eventSource = regenerated;
         this.eventError = "";
         return regenerated;
@@ -2086,6 +2090,11 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         }
         this.refreshEventCenter(report);
       },
+      onCancel: () => {
+        this.backfillBusy = false;
+        this.backfillMessage = "";
+        this.refreshEventCenter(report);
+      },
       successTitle: `${scope}不匹配事件已经重新生成`,
       successDetail: `已重新生成 ${candidates.length} 篇记录，并根据写回后的事件更新图谱。`,
       successLabel: "查看图谱",
@@ -2102,10 +2111,10 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
       confirmLabel: "重新整理",
       warning: true,
       stages: [`读取${monthly ? "本月" : "本周"}记录`, "整理图谱事件", "模型校准事件", "逐篇写回日记", `生成${monthly ? "月报" : "周报"}内容`, `保存${monthly ? "月报" : "周报"}`, "构建图谱数据", `更新${monthly ? "月报" : "周报"}与图谱`],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.busy = true;
         this.render(true);
-        const result = monthly ? await this.plugin.generateMonthlyReport(period, true, false, update) : await this.plugin.generateWeeklyReport(period, true, false, update);
+        const result = monthly ? await this.plugin.generateMonthlyReport(period, true, false, update, signal) : await this.plugin.generateWeeklyReport(period, true, false, update, signal);
         update({ stage: 8, total: 8, title: `更新${monthly ? "月报" : "周报"}与图谱`, detail: `正在载入新${monthly ? "月报" : "周报"}并恢复当前浏览位置。` });
         this.data = await this.app.vault.cachedRead(result.file);
         this.eventSource = result.source;
@@ -2125,6 +2134,10 @@ var SavedWeeklyReportView = class extends import_obsidian3.TextFileView {
         } catch (error) {
           this.eventError = errorMessage(error);
         }
+        this.render(true);
+      },
+      onCancel: () => {
+        this.busy = false;
         this.render(true);
       },
       successTitle: `${monthly ? "月报" : "周报"}和图谱已经重新整理`,

@@ -1,5 +1,5 @@
 // src/storage.ts
-import * as import_obsidian6 from "obsidian";
+import * as obsidian from "obsidian";
 import { EVENT_KIND_LABELS, EVENT_RELATION_LABELS, EVENT_SCHEMA_VERSION, EVENT_STATUS_LABELS, EVENT_TRACE_KIND_LABELS, EVENT_TYPE_LABELS, JOURNAL_SCHEMA_VERSION, validateEvents } from "./conversation";
 import { addLocalDays, localDateString, localTimeString, parseLocalDate } from "./date-utils";
 import { errorMessage } from "./journal-view";
@@ -224,20 +224,20 @@ function updateJournalFrontmatter(frontmatterValue, ratings, themes) {
   ];
 }
 function appendJournalSessionContent(content, date, draft, entry) {
-  const info = (0, import_obsidian6.getFrontMatterInfo)(content);
+  const info = (0, obsidian.getFrontMatterInfo)(content);
   if (!info.exists) {
     throw new Error("日记属性已损坏");
   }
-  const parsed = (0, import_obsidian6.parseYaml)(info.frontmatter);
+  const parsed = (0, obsidian.parseYaml)(info.frontmatter);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || parsed["mind-trace"] !== true) {
     throw new Error("日记属性已损坏");
   }
   updateJournalFrontmatter(parsed, draft.ratings, entry.themes);
-  const yaml = (0, import_obsidian6.stringifyYaml)(parsed);
+  const yaml = (0, obsidian.stringifyYaml)(parsed);
   const withFrontmatter = `${content.slice(0, info.from)}${yaml}${content.slice(info.to)}`.trimEnd();
   const updated = `${withFrontmatter}\n\n---\n\n${renderJournalSection(date, draft, entry)}\n`;
-  const updatedInfo = (0, import_obsidian6.getFrontMatterInfo)(updated);
-  const updatedFrontmatter = updatedInfo.exists ? (0, import_obsidian6.parseYaml)(updatedInfo.frontmatter) : null;
+  const updatedInfo = (0, obsidian.getFrontMatterInfo)(updated);
+  const updatedFrontmatter = updatedInfo.exists ? (0, obsidian.parseYaml)(updatedInfo.frontmatter) : null;
   if (typeof updatedFrontmatter !== "object" || updatedFrontmatter === null || Array.isArray(updatedFrontmatter)) {
     throw new Error("日记属性更新失败");
   }
@@ -381,20 +381,20 @@ function regeneratedSessionMarkdown(documentDate, replacement) {
   });
 }
 function updateJournalHeaderText(content, themes) {
-  const info = (0, import_obsidian6.getFrontMatterInfo)(content);
+  const info = (0, obsidian.getFrontMatterInfo)(content);
   if (!info.exists) {
     throw new Error("日记属性已损坏");
   }
-  const parsed = (0, import_obsidian6.parseYaml)(info.frontmatter);
+  const parsed = (0, obsidian.parseYaml)(info.frontmatter);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || parsed["mind-trace"] !== true) {
     throw new Error("日记属性已损坏");
   }
   parsed["mind-trace-version"] = JOURNAL_SCHEMA_VERSION;
   parsed.themes = [...new Set(themes)];
-  const yaml = (0, import_obsidian6.stringifyYaml)(parsed);
+  const yaml = (0, obsidian.stringifyYaml)(parsed);
   const updated = `${content.slice(0, info.from)}${yaml}${content.slice(info.to)}`;
-  const updatedInfo = (0, import_obsidian6.getFrontMatterInfo)(updated);
-  const updatedFrontmatter = updatedInfo.exists ? (0, import_obsidian6.parseYaml)(updatedInfo.frontmatter) : null;
+  const updatedInfo = (0, obsidian.getFrontMatterInfo)(updated);
+  const updatedFrontmatter = updatedInfo.exists ? (0, obsidian.parseYaml)(updatedInfo.frontmatter) : null;
   if (typeof updatedFrontmatter !== "object" || updatedFrontmatter === null || Array.isArray(updatedFrontmatter) || updatedFrontmatter["mind-trace"] !== true || updatedFrontmatter["mind-trace-version"] !== JOURNAL_SCHEMA_VERSION) {
     throw new Error("日记属性更新失败");
   }
@@ -428,7 +428,7 @@ var JournalRepository = class {
     }
     this.saving = true;
     try {
-      const folder = (0, import_obsidian6.normalizePath)(settings.journalFolder.trim());
+      const folder = (0, obsidian.normalizePath)(settings.journalFolder.trim());
       if (folder.length === 0 || folder === "/") {
         throw new Error("日记目录不能为空");
       }
@@ -442,7 +442,7 @@ var JournalRepository = class {
         await this.app.vault.process(existing, (content) => {
           this.assertOperational();
           const current = this.app.vault.getAbstractFileByPath(filePath);
-          if (!(current instanceof import_obsidian6.TFile) || current.stat.mtime !== expectedMtime) {
+          if (!(current instanceof obsidian.TFile) || current.stat.mtime !== expectedMtime) {
             throw new Error("日记在保存期间发生了修改，未追加新记录");
           }
           return appendJournalSessionContent(content, date, draft, entry);
@@ -490,7 +490,7 @@ ${sections}`);
     return excerpts.join("\n\n");
   }
   async updateSessionEvents(file, sessionIndex, events, expectedMtime) {
-    if (!(file instanceof import_obsidian6.TFile)) {
+    if (!(file instanceof obsidian.TFile)) {
       throw new Error("日记文件已经移动或删除");
     }
     if (typeof expectedMtime !== "number" || file.stat.mtime !== expectedMtime) {
@@ -502,7 +502,7 @@ ${sections}`);
     await this.app.vault.process(file, (content) => {
       this.assertOperational();
       const current = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(current instanceof import_obsidian6.TFile) || current.stat.mtime !== expectedMtime) {
+      if (!(current instanceof obsidian.TFile) || current.stat.mtime !== expectedMtime) {
         throw new Error("日记在编辑期间发生了修改，请重新检查后再保存");
       }
       updated = replaceSessionEventSection(content, sessionIndex, events, { source: "manual", reviewed: true });
@@ -511,7 +511,7 @@ ${sections}`);
     return updated;
   }
   async updateJournalSessions(file, document2, replacements, expectedMtime) {
-    if (!(file instanceof import_obsidian6.TFile) || file.stat.mtime !== expectedMtime) {
+    if (!(file instanceof obsidian.TFile) || file.stat.mtime !== expectedMtime) {
       throw new Error("日记在生成校样后发生了修改，请重新生成后再保存");
     }
     const filePath = file.path;
@@ -520,7 +520,7 @@ ${sections}`);
     await this.app.vault.process(file, (content) => {
       this.assertOperational();
       const current = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(current instanceof import_obsidian6.TFile) || current.stat.mtime !== expectedMtime) {
+      if (!(current instanceof obsidian.TFile) || current.stat.mtime !== expectedMtime) {
         throw new Error("日记在读取期间发生了修改，请重新生成后再保存");
       }
       updated = replaceJournalSessionsContent(content, document2, replacements);
@@ -539,7 +539,7 @@ ${sections}`);
     const blocked = /* @__PURE__ */ new Map();
     for (const [filePath, fileResults] of grouped) {
       const file = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(file instanceof import_obsidian6.TFile)) {
+      if (!(file instanceof obsidian.TFile)) {
         blocked.set(filePath, `日记文件已经移动或删除：${filePath}`);
         continue;
       }
@@ -561,7 +561,7 @@ ${sections}`);
       }
       try {
         const file = this.app.vault.getAbstractFileByPath(filePath);
-        if (!(file instanceof import_obsidian6.TFile)) {
+        if (!(file instanceof obsidian.TFile)) {
           throw new Error("日记文件已经移动或删除");
         }
         const expectedMtime = fileResults[0]?.source.fileMtime;
@@ -572,7 +572,7 @@ ${sections}`);
         await this.app.vault.process(file, (currentContent) => {
           this.assertOperational();
           const current = this.app.vault.getAbstractFileByPath(filePath);
-          if (!(current instanceof import_obsidian6.TFile) || current.stat.mtime !== expectedMtime) {
+          if (!(current instanceof obsidian.TFile) || current.stat.mtime !== expectedMtime) {
             throw new Error("日记在读取期间发生了修改，已跳过以避免覆盖");
           }
           let updated = currentContent;
@@ -612,7 +612,7 @@ ${sections}`);
       if (existing === null) {
         this.assertOperational();
         await this.app.vault.createFolder(current);
-      } else if (!(existing instanceof import_obsidian6.TFolder)) {
+      } else if (!(existing instanceof obsidian.TFolder)) {
         throw new Error(`无法创建日记目录：${current} 已经是文件`);
       }
     }

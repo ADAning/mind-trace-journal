@@ -1,5 +1,5 @@
 // src/weekly-report.ts
-import * as import_obsidian6 from "obsidian";
+import * as obsidian from "obsidian";
 import { EVENT_KIND_LABELS, EVENT_RELATION_LABELS, EVENT_STATUS_LABELS, EVENT_TRACE_KIND_LABELS, EVENT_TYPE_LABELS, OBSERVATION_DIMENSIONS, metricSnapshot, observationClaimMetrics, observationDimension, observationItemKey } from "./conversation";
 import { activeWeekStats, addLocalDays, comparisonPeriod, localDateString, parseLocalDate, periodEntries, periodWeekStart } from "./date-utils";
 import { normalizeSelfObservation } from "./defaults";
@@ -12,7 +12,7 @@ import { eventMarkdownText, inlineMarkdown, yamlString } from "./storage";
 export { MonthlyReportRepository, ObservationRepository, WeeklyReportRepository, legacyObservationMarkdown, normalizeReportFolderValue, observationEvidenceMarkdown, observationFolder, parseObservationMarkdown, reportSummaryFromMarkdown, resolveReportFolder, weeklyReportFrontmatterStatus };
 
 function normalizeReportFolderValue(value) {
-  const normalized = typeof value === "string" ? (0, import_obsidian6.normalizePath)(value.trim()) : "";
+  const normalized = typeof value === "string" ? (0, obsidian.normalizePath)(value.trim()) : "";
   if (normalized.length === 0 || normalized === "/" || normalized === ".") {
     return "";
   }
@@ -30,7 +30,7 @@ function resolveReportFolder(settings, type = "weekly") {
     return configured;
   }
   const label = reportType === "monthly" ? "月报" : "周报";
-  return (0, import_obsidian6.normalizePath)(`${journalFolder}/报告/${label}`);
+  return (0, obsidian.normalizePath)(`${journalFolder}/报告/${label}`);
 }
 function weeklyReportFolder(settings) {
   return resolveReportFolder(settings, "weekly");
@@ -75,13 +75,13 @@ function generatedWeeklyReportCount(app, period) {
   return periods.size;
 }
 function weeklyReportPath(settings, period) {
-  return (0, import_obsidian6.normalizePath)(`${weeklyReportFolder(settings)}/${period.start}--${period.end}.md`);
+  return (0, obsidian.normalizePath)(`${weeklyReportFolder(settings)}/${period.start}--${period.end}.md`);
 }
 function monthlyReportFolder(settings) {
   return resolveReportFolder(settings, "monthly");
 }
 function monthlyReportPath(settings, period) {
-  return (0, import_obsidian6.normalizePath)(`${monthlyReportFolder(settings)}/${period.start.slice(0, 7)}.md`);
+  return (0, obsidian.normalizePath)(`${monthlyReportFolder(settings)}/${period.start.slice(0, 7)}.md`);
 }
 function scoreCell(value) {
   return value === null ? "—" : value.toFixed(1);
@@ -304,11 +304,11 @@ var WeeklyReportRepository = class {
       }
       try {
         const content = await this.app.vault.cachedRead(file);
-        const info = (0, import_obsidian6.getFrontMatterInfo)(content);
+        const info = (0, obsidian.getFrontMatterInfo)(content);
         if (!info.exists) {
           continue;
         }
-        const parsed = (0, import_obsidian6.parseYaml)(info.frontmatter);
+        const parsed = (0, obsidian.parseYaml)(info.frontmatter);
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed["mind-trace"] !== true) {
           continue;
         }
@@ -341,7 +341,7 @@ var WeeklyReportRepository = class {
     for (const entry of entries) {
       try {
         const file = this.app.vault.getAbstractFileByPath(entry.filePath);
-        if (!(file instanceof import_obsidian6.TFile)) {
+        if (!(file instanceof obsidian.TFile)) {
           continue;
         }
         let frontmatter = {};
@@ -351,8 +351,8 @@ var WeeklyReportRepository = class {
         } else {
           const content = await this.app.vault.cachedRead(file);
           try {
-            const info = (0, import_obsidian6.getFrontMatterInfo)(content);
-            const parsed = info.exists ? (0, import_obsidian6.parseYaml)(info.frontmatter) : {};
+            const info = (0, obsidian.getFrontMatterInfo)(content);
+            const parsed = info.exists ? (0, obsidian.parseYaml)(info.frontmatter) : {};
             frontmatter = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
           } catch {
           }
@@ -512,7 +512,7 @@ var WeeklyReportRepository = class {
   find(settings, period) {
     const targetStatus = weeklyPeriodStatus(period);
     const exact = this.app.vault.getAbstractFileByPath(weeklyReportPath(settings, period));
-    if (exact instanceof import_obsidian6.TFile) {
+    if (exact instanceof obsidian.TFile) {
       const frontmatter = this.app.metadataCache.getFileCache(exact)?.frontmatter;
       if (frontmatter?.["mind-trace-report"] === true && frontmatter?.["report-type"] === "weekly" && weeklyReportFrontmatterStatus(frontmatter) === targetStatus) {
         return exact;
@@ -552,8 +552,8 @@ var WeeklyReportRepository = class {
     let completingPreview = false;
     if (file === null && weeklyPeriodStatus(period) === "complete") {
       const exact = this.app.vault.getAbstractFileByPath(path);
-      const frontmatter = exact instanceof import_obsidian6.TFile ? this.app.metadataCache.getFileCache(exact)?.frontmatter : null;
-      if (exact instanceof import_obsidian6.TFile && frontmatter?.["mind-trace-report"] === true && frontmatter?.["report-type"] === "weekly" && frontmatter?.["period-start"] === period.start && frontmatter?.["period-end"] === period.end && weeklyReportFrontmatterStatus(frontmatter) === "partial") {
+      const frontmatter = exact instanceof obsidian.TFile ? this.app.metadataCache.getFileCache(exact)?.frontmatter : null;
+      if (exact instanceof obsidian.TFile && frontmatter?.["mind-trace-report"] === true && frontmatter?.["report-type"] === "weekly" && frontmatter?.["period-start"] === period.start && frontmatter?.["period-end"] === period.end && weeklyReportFrontmatterStatus(frontmatter) === "partial") {
         file = exact;
         completingPreview = true;
       }
@@ -562,7 +562,7 @@ var WeeklyReportRepository = class {
   }
   captureWriteVersion(settings, period) {
     const { file } = this.resolveWriteTarget(settings, period);
-    return file instanceof import_obsidian6.TFile ? { path: file.path, mtime: file.stat.mtime } : null;
+    return file instanceof obsidian.TFile ? { path: file.path, mtime: file.stat.mtime } : null;
   }
   async replaceExisting(file, content, expectedVersion, label) {
     if (expectedVersion === null || file.path !== expectedVersion.path || file.stat.mtime !== expectedVersion.mtime) {
@@ -572,7 +572,7 @@ var WeeklyReportRepository = class {
     await this.app.vault.process(file, () => {
       this.assertOperational();
       const current = this.app.vault.getAbstractFileByPath(file.path);
-      if (!(current instanceof import_obsidian6.TFile) || current.stat.mtime !== expectedVersion.mtime) {
+      if (!(current instanceof obsidian.TFile) || current.stat.mtime !== expectedVersion.mtime) {
         throw new Error(`${label}在保存前发生了修改，未覆盖新内容`);
       }
       return content;
@@ -582,7 +582,7 @@ var WeeklyReportRepository = class {
     const path = weeklyReportPath(settings, source.period);
     let { file: existing, completingPreview } = this.resolveWriteTarget(settings, source.period);
     const content = weeklyReportMarkdown(source, report);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof obsidian.TFile) {
       if (!overwrite && !completingPreview) {
         return existing;
       }
@@ -613,7 +613,7 @@ var WeeklyReportRepository = class {
       if (existing === null) {
         this.assertOperational();
         await this.app.vault.createFolder(current);
-      } else if (!(existing instanceof import_obsidian6.TFolder)) {
+      } else if (!(existing instanceof obsidian.TFolder)) {
         throw new Error(`无法创建报告目录：${current} 已经是文件`);
       }
     }
@@ -622,7 +622,7 @@ var WeeklyReportRepository = class {
 var MonthlyReportRepository = class extends WeeklyReportRepository {
   find(settings, period) {
     const file = this.app.vault.getAbstractFileByPath(monthlyReportPath(settings, period));
-    return file instanceof import_obsidian6.TFile ? file : null;
+    return file instanceof obsidian.TFile ? file : null;
   }
   resolveWriteTarget(settings, period) {
     return { file: this.find(settings, period), completingPreview: false };
@@ -631,7 +631,7 @@ var MonthlyReportRepository = class extends WeeklyReportRepository {
     const path = monthlyReportPath(settings, source.period);
     const existing = this.app.vault.getAbstractFileByPath(path);
     const content = monthlyReportMarkdown(source, report);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof obsidian.TFile) {
       if (!overwrite) {
         return existing;
       }
@@ -648,7 +648,7 @@ function observationFolder(settings) {
   if (configured.length > 0) return configured;
   const journalFolder = normalizeReportFolderValue(settings?.journalFolder);
   if (journalFolder.length === 0) throw new Error("日记目录不能为空");
-  return (0, import_obsidian6.normalizePath)(`${journalFolder}/观照`);
+  return (0, obsidian.normalizePath)(`${journalFolder}/观照`);
 }
 function observationStatusLabel(status) {
   return status === "confirmed" ? "确认" : status === "partial" ? "部分符合" : status === "rejected" ? "否认" : status === "uncertain" ? "不确定" : "待校准";
@@ -798,22 +798,46 @@ function observationFileStem(date = /* @__PURE__ */ new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}--${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 var ObservationRepository = class extends WeeklyReportRepository {
+  observationPaths: Set<string> | null = null;
+  invalidatePath(path: string, isObservation: boolean | null = null) {
+    if (this.observationPaths === null) return;
+    if (isObservation === false) {
+      this.observationPaths.delete(path);
+      return;
+    }
+    this.observationPaths.add(path);
+  }
   async list() {
     const results = [];
-    for (const file of this.app.vault.getMarkdownFiles()) {
+    const indexReady = this.observationPaths !== null;
+    if (!indexReady) this.observationPaths = new Set();
+    const files = indexReady
+      ? [...this.observationPaths].map((path) => this.app.vault.getAbstractFileByPath(path)).filter((file) => file instanceof obsidian.TFile)
+      : this.app.vault.getMarkdownFiles();
+    for (const file of files) {
       const cached = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      if (cached !== void 0 && cached?.["mind-trace-observation"] !== true) continue;
+      if (cached !== void 0 && cached?.["mind-trace-observation"] !== true) {
+        this.observationPaths.delete(file.path);
+        continue;
+      }
       let content;
       try {
         content = await this.app.vault.cachedRead(file);
-        const info = (0, import_obsidian6.getFrontMatterInfo)(content);
+        const info = (0, obsidian.getFrontMatterInfo)(content);
         if (!info.exists) continue;
-        const parsed = (0, import_obsidian6.parseYaml)(info.frontmatter);
-        if (parsed?.["mind-trace-observation"] !== true) continue;
+        const parsed = (0, obsidian.parseYaml)(info.frontmatter);
+        if (parsed?.["mind-trace-observation"] !== true) {
+          this.observationPaths.delete(file.path);
+          continue;
+        }
+        this.observationPaths.add(file.path);
         const snapshot = parseObservationMarkdown(content, file.path);
         results.push({ file, snapshot, error: "" });
       } catch (error) {
-        if (cached?.["mind-trace-observation"] === true || content?.includes("mind-trace-observation: true")) results.push({ file, snapshot: null, error: errorMessage(error) });
+        if (cached?.["mind-trace-observation"] === true || content?.includes("mind-trace-observation: true")) {
+          this.observationPaths.add(file.path);
+          results.push({ file, snapshot: null, error: errorMessage(error) });
+        }
       }
     }
     results.sort((left, right) => String(right.snapshot?.generatedAt ?? "").localeCompare(String(left.snapshot?.generatedAt ?? "")) || right.file.stat.mtime - left.file.stat.mtime);
@@ -825,19 +849,20 @@ var ObservationRepository = class extends WeeklyReportRepository {
     const generated = new Date(snapshot.generatedAt || Date.now());
     const stem = observationFileStem(Number.isNaN(generated.getTime()) ? /* @__PURE__ */ new Date() : generated);
     let suffix = 1;
-    let path = (0, import_obsidian6.normalizePath)(`${folder}/${stem}.md`);
+    let path = (0, obsidian.normalizePath)(`${folder}/${stem}.md`);
     while (this.app.vault.getAbstractFileByPath(path) !== null) {
       suffix += 1;
-      path = (0, import_obsidian6.normalizePath)(`${folder}/${stem}-${suffix}.md`);
+      path = (0, obsidian.normalizePath)(`${folder}/${stem}-${suffix}.md`);
     }
     this.assertOperational();
     const file = await this.app.vault.create(path, content ?? observationMarkdown(snapshot));
+    this.observationPaths?.add(file.path);
     const verified = parseObservationMarkdown(await this.app.vault.cachedRead(file), file.path);
     return { file, snapshot: verified };
   }
   async updateFeedback(filePath, claimId, value, expectedMtime = null) {
     const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian6.TFile)) throw new Error("观照文件已不存在");
+    if (!(file instanceof obsidian.TFile)) throw new Error("观照文件已不存在");
     if (expectedMtime !== null && file.stat.mtime !== expectedMtime) throw new Error("观照文件已在其他位置修改，请重新打开后再校准");
     const startingMtime = file.stat.mtime;
     let updated = "";
@@ -845,7 +870,7 @@ var ObservationRepository = class extends WeeklyReportRepository {
     await this.app.vault.process(file, (content) => {
       this.assertOperational();
       const current = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(current instanceof import_obsidian6.TFile) || current.stat.mtime !== startingMtime) {
+      if (!(current instanceof obsidian.TFile) || current.stat.mtime !== startingMtime) {
         throw new Error("观照文件在校准期间发生了修改，请重新打开后再保存");
       }
       const snapshot = parseObservationMarkdown(content, file.path);

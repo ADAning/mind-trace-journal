@@ -8083,6 +8083,10 @@ button.mind-trace-theme-filter-button:hover {
   margin-left: auto;
 }
 
+.mind-trace-toast-pill .mind-trace-toast-pill-cancel {
+  margin-left: 0;
+}
+
 @keyframes mind-trace-toast-pulse {
   0%,
   100% {
@@ -10915,6 +10919,11 @@ button.mind-trace-theme-filter-button:hover {
   min-width: 0;
   width: min(100%, 760px);
   justify-self: start;
+}
+
+.mind-trace-view .mind-trace-record-flow > .mind-trace-loading {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .mind-trace-view .mind-trace-conversation.is-timeline.has-history::after {
@@ -14323,4 +14332,137 @@ body {
   box-sizing: border-box;
   height: 14px;
   min-height: 14px;
+}
+
+/* Settings provider group follows Obsidian's open panel treatment. */
+.mind-trace-settings {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin-inline: 0;
+}
+
+.mind-trace-settings .mind-trace-settings-section .setting-item {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  row-gap: var(--size-4-3);
+  column-gap: 0;
+}
+
+.mind-trace-settings .mind-trace-settings-section .setting-item-info {
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+.mind-trace-settings .mind-trace-settings-section .setting-item-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--size-4-2);
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
+}
+
+.mind-trace-settings .mind-trace-provider-card {
+  box-sizing: border-box;
+  margin-bottom: var(--size-4-6);
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mind-trace-settings .mind-trace-provider-card .setting-item {
+  margin-bottom: var(--size-4-2);
+  padding: var(--size-4-4);
+  border: var(--setting-items-border-width, 0) solid var(--setting-items-border-color, var(--background-modifier-border));
+  border-radius: var(--setting-items-radius, var(--radius-l));
+  background-color: var(--setting-items-background, var(--background-primary-alt));
+}
+
+.mind-trace-settings .mind-trace-provider-card .setting-item:last-child {
+  margin-bottom: 0;
+}
+
+.mind-trace-settings .mind-trace-settings-section > .setting-item:not(.mind-trace-settings-section-heading) {
+  margin-bottom: var(--size-4-2);
+  padding: var(--size-4-4);
+  border: var(--setting-items-border-width, 0) solid var(--setting-items-border-color, var(--background-modifier-border));
+  border-radius: var(--setting-items-radius, var(--radius-l));
+  background-color: var(--setting-items-background, var(--background-primary-alt));
+}
+
+.mind-trace-settings .mind-trace-model-setting {
+  align-items: flex-start;
+  height: auto;
+  min-height: 0;
+}
+
+.mind-trace-settings .mind-trace-model-setting .setting-item-control {
+  align-self: flex-start;
+  flex-wrap: nowrap;
+}
+
+/* Settings controls use Obsidian's form tokens, as in Auto Link Title. */
+.mind-trace-settings .mind-trace-settings-section :where(input, textarea, select) {
+  border-color: var(--background-modifier-border);
+  background: var(--background-modifier-form-field, var(--background-primary));
+}
+
+.mind-trace-settings :where(input, textarea)::placeholder {
+  color: var(--text-faint) !important;
+  -webkit-text-fill-color: var(--text-faint) !important;
+}
+
+.mind-trace-settings :where(button, input, textarea, select):focus-visible {
+  outline-color: var(--interactive-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+}
+
+@container (max-width: 400px) {
+  .mind-trace-settings .mind-trace-settings-section .setting-item:not(.mind-trace-settings-section-heading) {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .mind-trace-settings .mind-trace-settings-section .setting-item-control {
+    width: 100%;
+    max-width: none;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .mind-trace-settings .mind-trace-model-setting .setting-item-control {
+    flex-wrap: wrap;
+  }
+}
+
+/* Saved journals keep the review-stage theme language, but remain read-only. */
+.mind-trace-view.mind-trace-saved-journal .mind-trace-theme-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-2-2);
+  border: 0;
+  background: transparent;
+}
+
+.mind-trace-view.mind-trace-saved-journal .mind-trace-theme-pill {
+  min-height: 0;
+  padding: var(--size-2-2) var(--size-4-2);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 28%, transparent);
+  border-radius: 999px;
+  background: var(--mind-trace-soft-accent);
+  color: var(--text-normal);
+  font-size: var(--font-smallest);
 }

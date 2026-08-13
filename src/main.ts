@@ -1,5 +1,5 @@
 // src/main.ts
-import * as import_obsidian7 from "obsidian";
+import * as obsidian from "obsidian";
 import { computeObservationMaturity, observationEvidenceCatalog, observationFeedbackContext } from "./conversation";
 import { credentialAvailable, resolveCredential } from "./credentials";
 import { completedPeriod, draftEntryDate } from "./date-utils";
@@ -21,7 +21,7 @@ function isSettingsManager(value) {
   return typeof value === "object" && value !== null && typeof Reflect.get(value, "open") === "function" && typeof Reflect.get(value, "openTabById") === "function";
 }
 
-var MindTracePlugin = class extends import_obsidian7.Plugin {
+var MindTracePlugin = class extends obsidian.Plugin {
   settings: any = structuredClone(DEFAULT_SETTINGS);
   draft: any = null;
   repository;
@@ -40,7 +40,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   unloading = false;
   lifecycleAbortController = new AbortController();
   activeOperations = /* @__PURE__ */ new Set<{ cancelFromPlugin?: () => void }>();
-  pendingTimeouts = /* @__PURE__ */ new Set();
+  pendingTimeouts = /* @__PURE__ */ new Map();
+  openMindTraceFileTimers = /* @__PURE__ */ new Map();
   get ownerWindow() {
     return mindTraceWorkspaceDocument(this.app).defaultView ?? activeWindow;
   }
@@ -100,27 +101,26 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
           updateMetricsFile(this.app, file);
           invalidateParsedJournal(file.path);
           this.historyIndex.invalidate(file.path);
-          this.emitMetricsChanged();
+          this.observationRepository.invalidatePath(file.path, frontmatter?.["mind-trace-observation"] === true);
+          this.emitMetricsChanged([file.path]);
           this.refreshWeeklyEventViews();
-          void this.openMindTraceFile(file);
+          this.scheduleOpenMindTraceFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.workspace.on("file-open", (file) => {
-        void this.openMindTraceFile(file);
-        this.scheduleTimeout(() => void this.openMindTraceFile(file), 50);
-        this.scheduleTimeout(() => void this.openMindTraceFile(file), 250);
+        this.scheduleOpenMindTraceFile(file, 100);
       })
     );
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", (leaf) => {
         const view = leaf?.view;
-        if (view instanceof import_obsidian7.MarkdownView) {
-          if (!(view.file instanceof import_obsidian7.TFile) || this.sourceEditLeaves.get(leaf) !== view.file.path) {
+        if (view instanceof obsidian.MarkdownView) {
+          if (!(view.file instanceof obsidian.TFile) || this.sourceEditLeaves.get(leaf) !== view.file.path) {
             this.sourceEditLeaves.delete(leaf);
           }
-          void this.openMindTraceFile(view.file);
+          this.scheduleOpenMindTraceFile(view.file);
         } else if (leaf !== null) {
           this.sourceEditLeaves.delete(leaf);
         }
@@ -133,22 +133,25 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     });
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian7.TFile && file.extension === "md") {
+        if (file instanceof obsidian.TFile && file.extension === "md") {
+          this.observationRepository.invalidatePath(file.path, false);
           const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
           const relevant = metricsFileTracked(this.app, file.path) || this.historyIndex.hasPath(file.path) || frontmatter?.["mind-trace"] === true || frontmatter?.["mind-trace-report"] === true || frontmatter?.["mind-trace-observation"] === true;
           if (!relevant) return;
           removeMetricsFile(this.app, file.path);
           invalidateParsedJournal(file.path);
           this.historyIndex.invalidate(file.path);
-          this.emitMetricsChanged();
+          this.emitMetricsChanged([file.path]);
           this.refreshWeeklyEventViews();
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof import_obsidian7.TFile && file.extension === "md") {
+        if (file instanceof obsidian.TFile && file.extension === "md") {
+          this.observationRepository.invalidatePath(oldPath, false);
           const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+          this.observationRepository.invalidatePath(file.path, frontmatter?.["mind-trace-observation"] === true ? true : null);
           const relevant = metricsFileTracked(this.app, oldPath) || metricsFileTracked(this.app, file.path) || this.historyIndex.hasPath(oldPath) || this.historyIndex.hasPath(file.path) || frontmatter?.["mind-trace"] === true || frontmatter?.["mind-trace-report"] === true || frontmatter?.["mind-trace-observation"] === true;
           if (!relevant) return;
           renameMetricsFile(this.app, oldPath, file);
@@ -156,7 +159,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
           invalidateParsedJournal(file.path);
           this.historyIndex.invalidate(oldPath);
           this.historyIndex.invalidate(file.path);
-          this.emitMetricsChanged();
+          this.emitMetricsChanged([oldPath, file.path]);
           this.refreshWeeklyEventViews();
         }
       })
@@ -167,9 +170,9 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.lifecycleAbortController.abort();
     for (const operation of [...this.activeOperations]) operation.cancelFromPlugin?.();
     this.activeOperations.clear();
-    const ownerWindow = mindTraceWorkspaceDocument(this.app).defaultView ?? activeWindow;
-    for (const timeout of this.pendingTimeouts) ownerWindow.clearTimeout(timeout);
+    for (const [timeout, ownerWindow] of this.pendingTimeouts) ownerWindow.clearTimeout(timeout);
     this.pendingTimeouts.clear();
+    this.openMindTraceFileTimers.clear();
     this.privacyController?.dispose();
     this.historyIndex?.clear();
     this.reportCoordinator?.clearSourceCaches();
@@ -200,8 +203,26 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       this.pendingTimeouts.delete(timeout);
       if (!this.unloading) callback();
     }, delay);
-    this.pendingTimeouts.add(timeout);
+    this.pendingTimeouts.set(timeout, ownerWindow);
     return timeout;
+  }
+  cancelTimeout(timeout) {
+    if (timeout === null || timeout === void 0) return;
+    const ownerWindow = this.pendingTimeouts.get(timeout) ?? (mindTraceWorkspaceDocument(this.app).defaultView ?? activeWindow);
+    ownerWindow.clearTimeout(timeout);
+    this.pendingTimeouts.delete(timeout);
+  }
+  scheduleOpenMindTraceFile(file, delay = 0) {
+    if (!(file instanceof obsidian.TFile) || this.unloading) return;
+    const path = file.path;
+    const existing = this.openMindTraceFileTimers.get(path);
+    if (existing !== void 0) this.cancelTimeout(existing);
+    const timeout = this.scheduleTimeout(() => {
+      this.openMindTraceFileTimers.delete(path);
+      const current = this.app.vault.getAbstractFileByPath(path);
+      if (current instanceof obsidian.TFile) void this.openMindTraceFile(current);
+    }, delay);
+    if (timeout !== null) this.openMindTraceFileTimers.set(path, timeout);
   }
   async saveSettings() {
     await this.persist();
@@ -215,13 +236,13 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   }
   async deleteSelfObservation(filePath) {
     const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian7.TFile)) throw new Error("观照文件已不存在");
+    if (!(file instanceof obsidian.TFile)) throw new Error("观照文件已不存在");
     this.assertOperational();
     await this.app.fileManager.trashFile(file);
     this.emitMetricsChanged();
     this.refreshJournalViews();
   }
-  async generateSelfObservation(reports) {
+  async generateSelfObservation(reports, signal = null) {
     if (!Array.isArray(reports) || reports.length === 0) {
       throw new Error("至少需要 1 份可解析回顾才能生成观照");
     }
@@ -232,7 +253,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       const value = current.feedback?.[claim.key];
       return value === void 0 ? [] : [[claim.key, { type: "claim", text: claim.statement, status: value.status, correction: value.correction ?? "" }]];
     })) : observationFeedbackContext(current.analysis, current.feedback);
-    const analysis = await generateObservation(this.createProvider(), reports, feedbackContext, maturity);
+    const analysis = await generateObservation(this.createProvider(signal), reports, feedbackContext, maturity);
+    if (signal?.aborted) throw new Error("任务已取消");
     const catalog = observationEvidenceCatalog(reports, 60);
     const referenced = new Set(analysis.claims.flatMap((claim) => [...claim.supportEvidenceRefs, ...claim.counterEvidenceRefs]));
     const evidence = catalog.filter((item) => referenced.has(item.id)).slice(0, 80);
@@ -243,7 +265,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       generatedAt,
       sources: reports.map((item) => {
         const file = this.app.vault.getAbstractFileByPath(item.filePath);
-        return { type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt, modifiedAt: file instanceof import_obsidian7.TFile ? file.stat.mtime : 0 };
+        return { type: item.type, periodStart: item.periodStart, periodEnd: item.periodEnd, periodStatus: item.periodStatus === "partial" ? "partial" : "complete", filePath: item.filePath, generatedAt: item.generatedAt, modifiedAt: file instanceof obsidian.TFile ? file.stat.mtime : 0 };
       }),
       maturity,
       analysis,
@@ -286,7 +308,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     this.draft = draft;
     await this.persist();
   }
-  createProvider() {
+  createProvider(signal = null) {
     this.assertOperational();
     const kind = this.settings.activeProvider;
     const configuration = this.settings.providers[kind];
@@ -299,7 +321,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       this.settings.providers,
       secret,
       (operation) => this.beginLlmActivity(kind, operation),
-      this.lifecycleAbortController.signal
+      signal ?? this.lifecycleAbortController.signal
     );
   }
   beginLlmActivity(providerKind, operation) {
@@ -353,6 +375,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
   }
   openSettings() {
+    // Obsidian 1.11.x exposes no public API for opening a specific settings tab.
+    // Keep this private-API compatibility shim isolated and retain the fallback notice.
     const settingsManager = Reflect.get(this.app, "setting");
     if (!isSettingsManager(settingsManager)) {
       showMindTraceNotice("请在 Obsidian 设置的第三方插件中打开“心迹”");
@@ -388,29 +412,29 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   async saveEntry(draft, entry, date = /* @__PURE__ */ new Date()) {
     const file = await this.repository.save(draft, entry, this.settings, date);
     this.historyIndex.invalidate(file.path);
-    this.emitMetricsChanged();
+    this.emitMetricsChanged([file.path]);
     return file;
   }
   weeklyReportStatus(period = completedPeriod("weekly")) {
     return this.reportCoordinator.weeklyReportStatus(period);
   }
-  generateWeeklyReport(period = completedPeriod("weekly"), overwrite = false, automatic = false, onProgress = null) {
-    return this.reportCoordinator.generateWeeklyReport(period, overwrite, automatic, onProgress);
+  generateWeeklyReport(period = completedPeriod("weekly"), overwrite = false, automatic = false, onProgress = null, signal = null) {
+    return this.reportCoordinator.generateWeeklyReport(period, overwrite, automatic, onProgress, signal);
   }
   monthlyReportStatus(period = completedPeriod("monthly")) {
     return this.reportCoordinator.monthlyReportStatus(period);
   }
-  generateMonthlyReport(period = completedPeriod("monthly"), overwrite = false, automatic = false, onProgress = null) {
-    return this.reportCoordinator.generateMonthlyReport(period, overwrite, automatic, onProgress);
+  generateMonthlyReport(period = completedPeriod("monthly"), overwrite = false, automatic = false, onProgress = null, signal = null) {
+    return this.reportCoordinator.generateMonthlyReport(period, overwrite, automatic, onProgress, signal);
   }
-  regenerateInvalidEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 4 }) {
-    return this.reportCoordinator.regenerateInvalidEvents(source, onProgress, progressPlan);
+  regenerateInvalidEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 4 }, signal = null) {
+    return this.reportCoordinator.regenerateInvalidEvents(source, onProgress, progressPlan, signal);
   }
-  calibrateWeeklyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
-    return this.reportCoordinator.calibrateWeeklyEvents(source, onProgress, progressPlan);
+  calibrateWeeklyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }, signal = null) {
+    return this.reportCoordinator.calibrateWeeklyEvents(source, onProgress, progressPlan, signal);
   }
-  calibrateMonthlyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
-    return this.reportCoordinator.calibrateMonthlyEvents(source, onProgress, progressPlan);
+  calibrateMonthlyEvents(source, onProgress = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }, signal = null) {
+    return this.reportCoordinator.calibrateMonthlyEvents(source, onProgress, progressPlan, signal);
   }
   onMetricsChanged(callback) {
     this.metricsListeners.add(callback);
@@ -505,7 +529,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
   async closeProtectedSources() {
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
-      if (!(view instanceof import_obsidian7.MarkdownView) || !(view.file instanceof import_obsidian7.TFile) || !await this.isMindTraceFile(view.file)) {
+      if (!(view instanceof obsidian.MarkdownView) || !(view.file instanceof obsidian.TFile) || !await this.isMindTraceFile(view.file)) {
         continue;
       }
       this.sourceEditLeaves.delete(leaf);
@@ -521,7 +545,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       return;
     }
     const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian7.TFile)) {
+    if (!(file instanceof obsidian.TFile)) {
       showMindTraceNotice("对应的心迹日记已经移动或删除");
       return;
     }
@@ -589,7 +613,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       return;
     }
     const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof import_obsidian7.TFile)) {
+    if (!(file instanceof obsidian.TFile)) {
       showMindTraceNotice("对应的心迹日记已经移动或删除");
       return;
     }
@@ -608,12 +632,12 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
   async openMindTraceFile(file) {
-    if (!(file instanceof import_obsidian7.TFile)) {
+    if (!(file instanceof obsidian.TFile)) {
       return;
     }
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
-      if (view instanceof import_obsidian7.MarkdownView && view.file === file && this.sourceEditLeaves.get(leaf) !== file.path) {
+      if (view instanceof obsidian.MarkdownView && view.file === file && this.sourceEditLeaves.get(leaf) !== file.path) {
         this.sourceEditLeaves.delete(leaf);
       }
     }
@@ -623,11 +647,13 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     const viewType = await this.protectedViewType(file);
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
-      if (!(view instanceof import_obsidian7.MarkdownView) || view.file !== file) {
+      if (!(view instanceof obsidian.MarkdownView) || view.file !== file) {
         continue;
       }
+      const privacyUnlocked = this.isPrivacyUnlocked();
       const explicitlyEditing = this.sourceEditLeaves.get(leaf) === file.path;
-      if (explicitlyEditing && this.isPrivacyUnlocked()) {
+      const sourceModeEditing = privacyUnlocked && view.getMode() === "source";
+      if (privacyUnlocked && (explicitlyEditing || sourceModeEditing)) {
         continue;
       }
       this.sourceEditLeaves.delete(leaf);
@@ -642,7 +668,7 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     const files = /* @__PURE__ */ new Set();
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
-      if (view instanceof import_obsidian7.MarkdownView && view.file instanceof import_obsidian7.TFile) {
+      if (view instanceof obsidian.MarkdownView && view.file instanceof obsidian.TFile) {
         files.add(view.file);
       }
     }
@@ -656,11 +682,11 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       return frontmatter["mind-trace"] === true || frontmatter["mind-trace-report"] === true || frontmatter["mind-trace-observation"] === true;
     }
     const content = await this.app.vault.cachedRead(file);
-    const info = (0, import_obsidian7.getFrontMatterInfo)(content);
+    const info = (0, obsidian.getFrontMatterInfo)(content);
     if (!info.exists) {
       return false;
     }
-    const parsed = (0, import_obsidian7.parseYaml)(info.frontmatter);
+    const parsed = (0, obsidian.parseYaml)(info.frontmatter);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       return false;
     }
@@ -679,8 +705,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
     }
     try {
       const content = await this.app.vault.cachedRead(file);
-      const info = (0, import_obsidian7.getFrontMatterInfo)(content);
-      const parsed = info.exists ? (0, import_obsidian7.parseYaml)(info.frontmatter) : null;
+      const info = (0, obsidian.getFrontMatterInfo)(content);
+      const parsed = info.exists ? (0, obsidian.parseYaml)(info.frontmatter) : null;
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
         if (Reflect.get(parsed, "mind-trace-observation") === true) return OBSERVATION_VIEW_TYPE;
         if (Reflect.get(parsed, "mind-trace-report") === true) return WEEKLY_REPORT_VIEW_TYPE;
@@ -690,8 +716,8 @@ var MindTracePlugin = class extends import_obsidian7.Plugin {
       return SAVED_JOURNAL_VIEW_TYPE;
     }
   }
-  emitMetricsChanged() {
-    this.reportCoordinator?.clearSourceCaches();
+  emitMetricsChanged(changedPaths = []) {
+    if (changedPaths.length > 0) this.reportCoordinator?.invalidateSourceCaches(changedPaths);
     for (const listener of this.metricsListeners) {
       listener();
     }

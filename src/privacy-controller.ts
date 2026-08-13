@@ -100,7 +100,7 @@ export class PrivacyController {
   activateUnlock() {
     this.unlockedUntil = Date.now() + PRIVACY_UNLOCK_DURATION_MS;
     this.clearTimer();
-    this.timer = this.host.ownerWindow.setTimeout(() => this.lock(false), PRIVACY_UNLOCK_DURATION_MS);
+    this.timer = this.host.scheduleTimeout(() => this.lock(false), PRIVACY_UNLOCK_DURATION_MS);
     this.host.refreshProtectedViews();
   }
 
@@ -113,7 +113,7 @@ export class PrivacyController {
 
   private clearTimer() {
     if (this.timer === null) return;
-    this.host.ownerWindow.clearTimeout(this.timer);
+    this.host.cancelTimeout(this.timer);
     this.timer = null;
   }
 }

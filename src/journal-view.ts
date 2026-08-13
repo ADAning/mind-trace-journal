@@ -1,5 +1,5 @@
 // src/journal-view.ts
-import * as import_obsidian4 from "obsidian";
+import * as obsidian from "obsidian";
 import { EVENT_KIND_LABELS, EVENT_STATUS_LABELS, EVENT_TYPES, EVENT_TYPE_LABELS, OBSERVATION_DIMENSIONS, computeObservationMaturity, constrainObservationAnalysisForMaturity, dedupeObservationReports, deriveObservationFreshness, metricSnapshot, observationClaimMetrics, observationConstrainedLevel, observationItemKey, observationSignal, observationSnapshotMaturity, recordAnswer, validateEvents } from "./conversation";
 import { DashboardComponent } from "./dashboard";
 import { addLocalDays, completedPeriod, currentMonthPeriod, currentWeekPeriod, draftEntryDate, entryDateWithCurrentTime, formationCaption, formationProgress, localDateString, monthlyWeekSegments, parseLocalDate, periodEntries, periodLabel, startOfLocalWeek } from "./date-utils";
@@ -205,7 +205,7 @@ function collectMonthlyReportFiles(app) {
   files.sort((left, right) => right.start.localeCompare(left.start) || right.end.localeCompare(left.end));
   return files;
 }
-var JournalView = class extends import_obsidian4.ItemView {
+var JournalView = class extends obsidian.ItemView {
   declare plugin: any;
   constructor(leaf, plugin) {
     super(leaf);
@@ -244,6 +244,8 @@ var JournalView = class extends import_obsidian4.ItemView {
   historyProgressEl = null;
   historySearchTimer = null;
   metricsRenderTimer = null;
+  homeLoadTimer = null;
+  questionTransitionTimer = null;
   historyLoadToken = 0;
   trajectoryView = "events";
   trajectoryQuery = createTrajectoryQuery();
@@ -320,6 +322,14 @@ var JournalView = class extends import_obsidian4.ItemView {
       this.ownerWindow.clearTimeout(this.metricsRenderTimer);
       this.metricsRenderTimer = null;
     }
+    if (this.homeLoadTimer !== null) {
+      this.ownerWindow.clearTimeout(this.homeLoadTimer);
+      this.homeLoadTimer = null;
+    }
+    if (this.questionTransitionTimer !== null) {
+      this.ownerWindow.clearTimeout(this.questionTransitionTimer);
+      this.questionTransitionTimer = null;
+    }
     return Promise.resolve();
   }
   clearHistoryState() {
@@ -354,13 +364,6 @@ var JournalView = class extends import_obsidian4.ItemView {
       return;
     }
     const shell = container.createDiv({ cls: "mind-trace-app" });
-    shell.appendChild(this.ownerDocument.createComment(`
-THESIS: Mind Trace is one connected instrument for recording and inspecting evidence; it refuses the rounded dashboard card wall.
-OWN-WORLD: Mature Obsidian structure on cool neutral surfaces; Record indigo, Trajectory cobalt, mood coral, energy teal, stress amber, Observation orchid; broad horizontal bands, fine keylines, tabular metadata.
-STORY: The user sees today, records, scans state, follows events, then opens bounded Review or evidence-led Observation.
-FIRST VIEWPORT: 56px destination bar; wide date + Record band; three state channels; 2:1 trend/events workspace; Review and Observation below.
-FORM: Horizontal instrument, approved comp A; user-pinned category standard; seed 3a34c5d6.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md`));
     this.renderNav(shell);
     const mode = MIND_TRACE_MODES.find((item) => item.id === this.mode) ?? MIND_TRACE_MODES[0];
     const panel = shell.createDiv({
@@ -412,7 +415,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       attr: { "aria-label": "心迹模块导航" }
     });
     const brand = nav.createDiv({ cls: "mind-trace-nav-brand" });
-    (0, import_obsidian4.setIcon)(brand.createSpan({ cls: "mind-trace-nav-brand-mark", attr: { "aria-hidden": "true" } }), "notebook-pen");
+    (0, obsidian.setIcon)(brand.createSpan({ cls: "mind-trace-nav-brand-mark", attr: { "aria-hidden": "true" } }), "notebook-pen");
     const brandCopy = brand.createSpan({ cls: "mind-trace-nav-brand-copy" });
     brandCopy.createSpan({ cls: "mind-trace-nav-brand-name", text: "心迹" });
     brandCopy.createSpan({ cls: "mind-trace-nav-brand-subtitle", text: "Mind Trace" });
@@ -432,7 +435,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           tabindex: active ? "0" : "-1"
         }
       });
-      (0, import_obsidian4.setIcon)(button.createSpan({ cls: "mind-trace-nav-icon", attr: { "aria-hidden": "true" } }), mode.icon);
+      (0, obsidian.setIcon)(button.createSpan({ cls: "mind-trace-nav-icon", attr: { "aria-hidden": "true" } }), mode.icon);
       button.createSpan({ text: mode.label });
       button.addEventListener("click", () => {
         this.setMode(mode.id);
@@ -486,7 +489,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const results = await mapWithConcurrency(filtered, 4, async (entry) => {
       try {
         const file = this.app.vault.getAbstractFileByPath(entry.filePath);
-        if (!(file instanceof import_obsidian4.TFile)) {
+        if (!(file instanceof obsidian.TFile)) {
           return null;
         }
         const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
@@ -643,7 +646,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       confirmLabel: overwrite ? "更新周报" : "开始生成",
       warning: overwrite,
       stages: ["读取本周记录", "整理图谱事件", "模型校准事件", "逐篇写回日记", "生成周报内容", "保存周报", "构建图谱数据", "更新周报与图谱"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.weeklyReportLoading = true;
         this.weeklyReportState = { kind: "loading", key, period };
         const reportProgress = (progress) => {
@@ -652,7 +655,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           this.refreshWeeklyReportCard();
         };
         this.refreshWeeklyReportCard();
-        const status = await this.plugin.generateWeeklyReport(period, overwrite, automatic, reportProgress);
+        const status = await this.plugin.generateWeeklyReport(period, overwrite, automatic, reportProgress, signal);
         reportProgress({ stage: 8, total: 8, title: "更新周报与图谱", detail: "正在更新首页周报卡和图谱入口。" });
         this.weeklyReportState = { ...status, key };
         return status;
@@ -672,6 +675,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         this.weeklyReportState = { kind: "error", key, period, message: errorMessage(error) };
         this.refreshWeeklyReportCard();
         void this.loadMonthlyReportCard();
+      },
+      onCancel: () => {
+        this.weeklyReportLoading = false;
+        this.weeklyReportProgress = null;
+        this.weeklyReportState = null;
+        this.refreshWeeklyReportCard();
       },
       successTitle: "周报和图谱已经生成",
       successDetail: "事件已按整周上下文整理，周报与图谱均已保存。",
@@ -734,7 +743,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       confirmLabel: overwrite ? "更新月报" : "开始生成",
       warning: overwrite,
       stages: ["读取本月记录", "整理月度事件", "按周校准事件", "逐段写回日记", "生成月报内容", "保存月报", "构建月度图谱", "更新月报页面"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.monthlyReportLoading = true;
         this.monthlyReportState = { kind: "loading", key, period };
         const reportProgress = (progress) => {
@@ -743,7 +752,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           this.refreshMonthlyReportCard();
         };
         this.refreshMonthlyReportCard();
-        const status = await this.plugin.generateMonthlyReport(period, overwrite, automatic, reportProgress);
+        const status = await this.plugin.generateMonthlyReport(period, overwrite, automatic, reportProgress, signal);
         reportProgress({ stage: 8, total: 8, title: "更新月报页面", detail: "正在更新月报入口和图谱。" });
         this.monthlyReportState = { ...status, key };
         return status;
@@ -760,6 +769,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       onError: (error) => {
         this.monthlyReportLoading = false;
         this.monthlyReportState = { kind: "error", key, period, message: errorMessage(error) };
+        this.refreshMonthlyReportCard();
+      },
+      onCancel: () => {
+        this.monthlyReportLoading = false;
+        this.monthlyReportProgress = null;
+        this.monthlyReportState = null;
         this.refreshMonthlyReportCard();
       },
       successTitle: "月报和图谱已经生成",
@@ -786,7 +801,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       confirmLabel: hasExisting ? "更新预览" : "开始生成",
       warning: hasExisting,
       stages: ["读取本月记录", "整理月度事件", "按周校准事件", "逐段写回日记", "生成月报内容", "保存月报", "构建月度图谱", "更新月报页面"],
-      run: async (update) => await this.plugin.generateMonthlyReport(period, true, false, update),
+      run: async (update, { signal }) => await this.plugin.generateMonthlyReport(period, true, false, update, signal),
       successTitle: "本月预览已生成",
       successDetail: "月报标记为截至今天，月底后可再生成完整月报。",
       successLabel: "查看月报",
@@ -813,8 +828,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       confirmLabel: hasExisting ? "更新周报" : "开始生成",
       warning: hasExisting,
       stages: ["读取本周记录", "整理图谱事件", "模型校准事件", "逐篇写回日记", "生成周报内容", "保存周报", "构建图谱数据", "更新周报与图谱"],
-      run: async (update) => {
-        return await this.plugin.generateWeeklyReport(period, hasExisting, false, update);
+      run: async (update, { signal }) => {
+        return await this.plugin.generateWeeklyReport(period, hasExisting, false, update, signal);
       },
       successTitle: "本周周报已生成",
       successDetail: "当前自然周已生成一份周报版本。",
@@ -972,7 +987,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     }
     this.homeDashboard = dashboard;
     void this.loadAndRenderInsights(this.plugin.settings.dashboardRange, result.entries);
-    this.ownerWindow.setTimeout(() => {
+    if (this.homeLoadTimer !== null) this.ownerWindow.clearTimeout(this.homeLoadTimer);
+    this.homeLoadTimer = this.ownerWindow.setTimeout(() => {
+      this.homeLoadTimer = null;
+      if (this.leaf.view !== this || this.mode !== "home") return;
       void this.loadWeeklyReportCard();
       void this.loadObservationReports();
     }, 0);
@@ -989,7 +1007,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     for (const [key, label, icon] of [["mood", "心情", "heart"], ["energy", "精力", "zap"], ["stress", "压力", "alert-circle"]]) {
       const channel = channels.createDiv({ cls: `mind-trace-home-state-channel is-${key}` });
       const channelLabel = channel.createDiv({ cls: "mind-trace-home-state-label" });
-      (0, import_obsidian4.setIcon)(channelLabel.createSpan({ cls: "mind-trace-home-state-icon", attr: { "aria-hidden": "true" } }), icon);
+      (0, obsidian.setIcon)(channelLabel.createSpan({ cls: "mind-trace-home-state-icon", attr: { "aria-hidden": "true" } }), icon);
       channelLabel.createSpan({ text: label });
       const score = entry === null ? null : entry[key];
       const value = channel.createDiv({ cls: "mind-trace-home-state-value" });
@@ -1448,7 +1466,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const controls = section.createDiv({ cls: "mind-trace-history-controls" });
     const searchRow = controls.createDiv({ cls: "mind-trace-history-search-row" });
     const searchWrap = searchRow.createDiv({ cls: "mind-trace-history-search" });
-    (0, import_obsidian4.setIcon)(searchWrap.createSpan({ cls: "mind-trace-history-search-icon", attr: { "aria-hidden": "true" } }), "search");
+    (0, obsidian.setIcon)(searchWrap.createSpan({ cls: "mind-trace-history-search-icon", attr: { "aria-hidden": "true" } }), "search");
     const search = searchWrap.createEl("input", {
       cls: "mind-trace-history-search-input",
       attr: {
@@ -1555,7 +1573,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       const selectedValues = group.createDiv({ cls: "mind-trace-history-selected-values" });
       for (const value of selected) {
         const chip = selectedValues.createEl("button", { text: value, attr: { type: "button", "aria-label": `移除${label}筛选 ${value}` } });
-        (0, import_obsidian4.setIcon)(chip.createSpan({ cls: "mind-trace-chip-remove-icon", attr: { "aria-hidden": "true" } }), "x");
+        (0, obsidian.setIcon)(chip.createSpan({ cls: "mind-trace-chip-remove-icon", attr: { "aria-hidden": "true" } }), "x");
         chip.addEventListener("click", () => {
           selected.delete(value);
           this.historyVisibleCount = 30;
@@ -1608,7 +1626,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const chips = row.createDiv({ cls: "mind-trace-history-active-filter-chips" });
     const addChip = (label, onRemove) => {
       const chip = chips.createEl("button", { cls: "mind-trace-history-active-filter-chip", text: label, attr: { type: "button", "aria-label": `移除筛选 ${label}` } });
-      (0, import_obsidian4.setIcon)(chip.createSpan({ cls: "mind-trace-chip-remove-icon", attr: { "aria-hidden": "true" } }), "x");
+      (0, obsidian.setIcon)(chip.createSpan({ cls: "mind-trace-chip-remove-icon", attr: { "aria-hidden": "true" } }), "x");
       chip.addEventListener("click", () => {
         onRemove();
         this.historyVisibleCount = 30;
@@ -1696,7 +1714,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     open.createSpan({ cls: "mind-trace-history-match-label", text: result.matchLabel });
     const excerpt = open.createEl("p", { cls: "mind-trace-history-result-excerpt" });
     this.appendHistoryHighlight(excerpt, result.excerpt, result.tokens);
-    (0, import_obsidian4.setIcon)(open.createSpan({ cls: "mind-trace-history-result-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
+    (0, obsidian.setIcon)(open.createSpan({ cls: "mind-trace-history-result-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
     open.addEventListener("click", () => void this.openJournalFile(entry.filePath, entry.sessionIndex));
     if (entry.themes.length > 0) {
       const themes = card.createDiv({ cls: "mind-trace-history-result-themes", attr: { "aria-label": "记录主题" } });
@@ -1852,7 +1870,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       cls: "mind-trace-home-sessions",
       text: `${entry.sessions} 篇`
     });
-    (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
+    (0, obsidian.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
     const open = () => {
       void this.openJournalFile(entry.filePath);
     };
@@ -2030,7 +2048,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       const statusLabel = source.periodStatus === "partial" ? "（周期尚未结束）" : "";
       const label = `${source.type === "monthly" ? "月报" : "周报"} ${source.periodStart} — ${source.periodEnd}${statusLabel}`;
       const file = this.app.vault.getAbstractFileByPath(source.filePath);
-      if (file instanceof import_obsidian4.TFile) {
+      if (file instanceof obsidian.TFile) {
         const button = item.createEl("button", { cls: "mind-trace-observation-source-link", text: label, attr: { type: "button" } });
         button.addEventListener("click", () => void this.openWeeklyReportFile(source.filePath));
       } else {
@@ -2294,7 +2312,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const edit = bar.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
     edit.addEventListener("click", () => {
       const target = this.app.vault.getAbstractFileByPath(this.observationSelectedPath);
-      if (target instanceof import_obsidian4.TFile) void this.plugin.openProtectedMarkdownSource(this.leaf, target);
+      if (target instanceof obsidian.TFile) void this.plugin.openProtectedMarkdownSource(this.leaf, target);
     });
     if (selected?.error) bar.createDiv({ cls: "mind-trace-observation-format-error", text: `${selected.file.path}：${selected.error}` });
   }
@@ -2318,7 +2336,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const edit = actions.createEl("button", { text: "编辑 Markdown", attr: { type: "button" } });
     edit.addEventListener("click", () => {
       const file = this.app.vault.getAbstractFileByPath(snapshot.filePath);
-      if (file instanceof import_obsidian4.TFile) void this.plugin.openProtectedMarkdownSource(this.leaf, file);
+      if (file instanceof obsidian.TFile) void this.plugin.openProtectedMarkdownSource(this.leaf, file);
     });
     const remove = actions.createEl("button", { text: "删除", attr: { type: "button" } });
     remove.addEventListener("click", () => {
@@ -2355,7 +2373,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         void this.plugin.openJournalDate(item.date);
         return;
       }
-      const sourcePath = item.sourceReports?.find((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFile);
+      const sourcePath = item.sourceReports?.find((path) => this.app.vault.getAbstractFileByPath(path) instanceof obsidian.TFile);
       if (sourcePath) void this.openWeeklyReportFile(sourcePath);
     };
     for (const [claimIndex, claim] of analysis.claims.entries()) {
@@ -2424,11 +2442,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       confirm: overwrite,
       confirmLabel: overwrite ? "重新观照" : "开始观照",
       warning: overwrite,
-      run: async () => {
+      run: async (_update, { signal }) => {
         this.observationLoading = true;
         this.observationError = "";
         this.render(true);
-        const snapshot = await this.plugin.generateSelfObservation(this.observationReports);
+        const snapshot = await this.plugin.generateSelfObservation(this.observationReports, signal);
         this.observationLoading = false;
         return snapshot;
       },
@@ -2447,6 +2465,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       onError: (error) => {
         this.observationLoading = false;
         this.observationError = errorMessage(error);
+        this.render(true);
+      },
+      onCancel: () => {
+        this.observationLoading = false;
+        this.observationError = "";
         this.render(true);
       },
       successTitle: "观照已经生成",
@@ -2671,7 +2694,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         cls: "mind-trace-home-sessions",
         text: `${item.days} 天 · ${item.sessions} 篇`
       });
-      (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
+      (0, obsidian.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
       const open = () => void this.openWeeklyReportFile(item.file.path);
       row.addEventListener("click", open);
     }
@@ -2711,7 +2734,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       if (item.status === "partial") main.createSpan({ cls: "mind-trace-report-badge", text: "截至今天" });
       main.createSpan({ cls: "mind-trace-report-row-summary mind-trace-report-list-summary", text: "正在读取摘要…" });
       main.createSpan({ cls: "mind-trace-home-sessions", text: `${item.days} 天 · ${item.sessions} 篇 · ${item.activeWeeks} 份周报` });
-      (0, import_obsidian4.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
+      (0, obsidian.setIcon)(main.createSpan({ cls: "mind-trace-home-row-arrow", attr: { "aria-hidden": "true" } }), "arrow-right");
       const open = () => void this.openWeeklyReportFile(item.file.path);
       row.addEventListener("click", open);
     }
@@ -3056,17 +3079,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       });
       return;
     }
-    if (this.busy) {
-      const loading = shell.createDiv({
-        cls: "mind-trace-loading",
-        attr: { role: "status" }
-      });
-      loading.createSpan({
-        cls: "mind-trace-loading-ink",
-        attr: { "aria-hidden": "true" }
-      });
-      const statusCopy = loading.createSpan({ cls: "mind-trace-llm-status-copy" });
-      attachLlmActivityStatus(statusCopy, this.plugin, this.busyText);
+    if (this.busy && (draft.generated !== null || draft.step === 0)) {
+      this.renderBusyStatus(shell);
     }
     if (draft.generated !== null) {
       this.renderPreview(shell, draft);
@@ -3075,6 +3089,18 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     } else {
       this.renderQuestion(shell, draft);
     }
+  }
+  renderBusyStatus(container) {
+    const loading = container.createDiv({
+      cls: "mind-trace-loading",
+      attr: { role: "status" }
+    });
+    loading.createSpan({
+      cls: "mind-trace-loading-ink",
+      attr: { "aria-hidden": "true" }
+    });
+    const statusCopy = loading.createSpan({ cls: "mind-trace-llm-status-copy" });
+    attachLlmActivityStatus(statusCopy, this.plugin, this.busyText);
   }
   renderEntryDate(container, draft) {
     const entryDate = draftEntryDate(draft);
@@ -3277,6 +3303,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     const flow = conversation.createDiv({
       cls: "mind-trace-record-flow"
     });
+    if (this.busy) this.renderBusyStatus(flow);
     this.renderTimelineHistory(flow, draft);
     if (question === null) {
       const decisionStage = flow.createDiv({
@@ -3297,7 +3324,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         cls: "mind-trace-decision-card mind-trace-record-decision"
       });
       const decisionMark = recovery.createDiv({ cls: "mind-trace-decision-mark", attr: { "aria-hidden": "true" } });
-      (0, import_obsidian4.setIcon)(decisionMark, "check");
+      (0, obsidian.setIcon)(decisionMark, "check");
       recovery.createDiv({
         cls: "mind-trace-section-kicker",
         text: "核心记录已经完成"
@@ -3713,7 +3740,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       return;
     }
     stage.addClass("is-leaving");
-    this.ownerWindow.setTimeout(() => {
+    if (this.questionTransitionTimer !== null) this.ownerWindow.clearTimeout(this.questionTransitionTimer);
+    this.questionTransitionTimer = this.ownerWindow.setTimeout(() => {
+      this.questionTransitionTimer = null;
+      if (this.leaf.view !== this) return;
       void next();
     }, 180);
   }
@@ -4214,10 +4244,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       confirmLabel: regenerate ? "重新整理" : "开始整理",
       warning: regenerate,
       stages: ["读取记录上下文", "整理日记与反思", "评估状态对照", "生成校样"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.busy = true;
         this.render(true);
-        await this.generateEntryContent(draft, update);
+        await this.generateEntryContent(draft, update, signal);
         update({ stage: 4, total: 4, title: "生成校样", detail: "正在准备可以继续修改的日记校样。" });
         return draft;
       },
@@ -4227,6 +4257,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         await new Promise((resolve) => this.ownerWindow.requestAnimationFrame(resolve));
       },
       onError: () => {
+        this.busy = false;
+        this.render(true);
+      },
+      onCancel: () => {
         this.busy = false;
         this.render(true);
       },
@@ -4243,10 +4277,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     await this.plugin.setDraft(draft);
     this.generateEntry(draft);
   }
-  async generateEntryContent(draft, onProgress = null) {
+  async generateEntryContent(draft, onProgress = null, signal = null) {
     this.busyText = "正在独立评估状态并整理日记…";
     onProgress?.({ stage: 1, total: 4, title: "读取记录上下文", detail: "正在读取与本次记录相关的近期日记。" });
-    const provider = this.plugin.createProvider();
+    const provider = this.plugin.createProvider(signal);
     const history = await this.plugin.repository.recentContext(
       this.plugin.settings,
       parseLocalDate(draftEntryDate(draft)) ?? /* @__PURE__ */ new Date()
@@ -4263,6 +4297,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       return value;
     });
     const [generated, assessment] = await Promise.all([journalTask, ratingTask]);
+    if (signal?.aborted) throw new Error("任务已取消");
     draft.generated = generated;
     draft.aiAssessment = assessment;
     await this.plugin.setDraft(draft);

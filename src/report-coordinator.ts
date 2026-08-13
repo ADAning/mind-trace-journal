@@ -7,6 +7,10 @@ import { reportSummaryFromMarkdown } from "./weekly-report";
 
 type ProgressCallback = ((progress: any) => void) | null;
 
+function throwIfAborted(signal: AbortSignal | null) {
+  if (signal?.aborted) throw new Error("任务已取消");
+}
+
 export class ReportCoordinator {
   private readonly weeklyReportAttempts = new Set<string>();
   private readonly weeklyReportInFlight = new Map<string, Promise<any>>();
@@ -20,6 +24,19 @@ export class ReportCoordinator {
   clearSourceCaches() {
     this.weeklyReportSourceCache.clear();
     this.monthlyReportSourceCache.clear();
+  }
+
+  invalidateSourceCaches(changedPaths: string[]) {
+    const changed = new Set(changedPaths);
+    const invalidate = (cache: Map<string, any>) => {
+      for (const [key, source] of cache) {
+        if (source.sourceFiles?.some((file: TFile) => changed.has(file.path))) {
+          cache.delete(key);
+        }
+      }
+    };
+    invalidate(this.weeklyReportSourceCache);
+    invalidate(this.monthlyReportSourceCache);
   }
 
   async weeklyReportStatus(period = completedPeriod("weekly")) {
@@ -47,13 +64,13 @@ export class ReportCoordinator {
         summary: reportSummaryFromMarkdown(content)
       };
     }
-    const minimum = Math.min(7, Math.max(4, Number(this.host.settings.weeklyReportMinimumDays) || 4));
+    const minimum = Math.min(7, Math.max(4, Number(this.host.settings.weeklyReportMinimumDays) || 5));
     if (source.stats.days < minimum) return { kind: "insufficient", period, source, minimum };
     if (!this.host.isProviderConfigured()) return { kind: "unconfigured", period, source };
     return { kind: "missing", period, source };
   }
 
-  async generateWeeklyReport(period = completedPeriod("weekly"), overwrite = false, automatic = false, onProgress: ProgressCallback = null) {
+  async generateWeeklyReport(period = completedPeriod("weekly"), overwrite = false, automatic = false, onProgress: ProgressCallback = null, signal: AbortSignal | null = null) {
     const key = `${period.start}--${period.end}`;
     if (automatic && this.weeklyReportAttempts.has(key)) return await this.weeklyReportStatus(period);
     const existingFlight = this.weeklyReportInFlight.get(key);
@@ -65,17 +82,20 @@ export class ReportCoordinator {
       if ((status.kind === "ready" || status.kind === "stale") && !overwrite) return status;
       if (status.kind === "insufficient") throw new Error(`至少需要 ${status.minimum} 个记录日才能生成周报`);
       if (status.kind === "unconfigured") throw new Error("请先在心迹设置中配置模型与 API Key");
+      throwIfAborted(signal);
       const expectedReportVersion = this.host.weeklyReportRepository.captureWriteVersion(this.host.settings, period);
       let source = status.source;
       const calibrationCount = source.eventCalibrationSessions.length;
       onProgress?.({ stage: 2, total: 8, title: "整理图谱事件", detail: calibrationCount > 0 ? `发现 ${calibrationCount} 篇记录需要整周校准。` : "现有事件已经可以直接用于本周图谱。" });
-      if (calibrationCount > 0) source = await this.calibrateWeeklyEvents(source, onProgress, { model: 3, write: 4, reload: 7, total: 8 });
+      if (calibrationCount > 0) source = await this.calibrateWeeklyEvents(source, onProgress, { model: 3, write: 4, reload: 7, total: 8 }, signal);
       onProgress?.({ stage: 5, total: 8, title: "生成周报内容", detail: "正在根据整理后的日记和图谱事件生成本周回顾。" });
-      const report = await generateWeeklyReport(this.host.createProvider(), source, this.host.settings);
+      throwIfAborted(signal);
+      const report = await generateWeeklyReport(this.host.createProvider(signal), source, this.host.settings);
       onProgress?.({ stage: 6, total: 8, title: "保存周报", detail: "正在把周报写入本地 Vault。" });
+      throwIfAborted(signal);
       const file = await this.host.weeklyReportRepository.save(this.host.settings, source, report, overwrite, expectedReportVersion);
       onProgress?.({ stage: 7, total: 8, title: "构建图谱数据", detail: "正在重新汇总事件进展、体验/方向线索、实体和明确关系。" });
-      this.host.emitMetricsChanged();
+      this.host.emitMetricsChanged(source.sourceFiles?.map((file: TFile) => file.path) ?? []);
       return { kind: "ready", period, source, file, summary: report.summary };
     })();
     this.weeklyReportInFlight.set(key, task);
@@ -116,7 +136,7 @@ export class ReportCoordinator {
     return { kind: "missing", period, source };
   }
 
-  async generateMonthlyReport(period = completedPeriod("monthly"), overwrite = false, automatic = false, onProgress: ProgressCallback = null) {
+  async generateMonthlyReport(period = completedPeriod("monthly"), overwrite = false, automatic = false, onProgress: ProgressCallback = null, signal: AbortSignal | null = null) {
     const key = `${period.start}--${period.end}--${period.status ?? "complete"}`;
     if (automatic && this.monthlyReportAttempts.has(key)) return await this.monthlyReportStatus(period);
     const existingFlight = this.monthlyReportInFlight.get(key);
@@ -128,17 +148,20 @@ export class ReportCoordinator {
       if ((status.kind === "ready" || status.kind === "stale") && !overwrite) return status;
       if (status.kind === "insufficient") throw new Error(period.status === "partial" ? "本月至少需要 1 个记录日才能生成预览" : `至少需要 ${status.minimum} 份已生成周报才能生成正式月报`);
       if (status.kind === "unconfigured") throw new Error("请先在心迹设置中配置模型与 API Key");
+      throwIfAborted(signal);
       const expectedReportVersion = this.host.monthlyReportRepository.captureWriteVersion(this.host.settings, period);
       let source = status.source;
       const calibrationCount = source.eventCalibrationSessions.length;
       onProgress?.({ stage: 2, total: 8, title: "整理月度事件", detail: calibrationCount > 0 ? `发现 ${calibrationCount} 篇记录需要按自然周校准。` : "现有事件已经可以直接用于本月图谱。" });
-      if (calibrationCount > 0) source = await this.calibrateMonthlyEvents(source, onProgress, { model: 3, write: 4, reload: 7, total: 8 });
+      if (calibrationCount > 0) source = await this.calibrateMonthlyEvents(source, onProgress, { model: 3, write: 4, reload: 7, total: 8 }, signal);
       onProgress?.({ stage: 5, total: 8, title: "生成月报内容", detail: "正在根据整月日记、节奏和图谱事件生成回顾。" });
-      const report = await generateMonthlyReport(this.host.createProvider(), source, this.host.settings);
+      throwIfAborted(signal);
+      const report = await generateMonthlyReport(this.host.createProvider(signal), source, this.host.settings);
       onProgress?.({ stage: 6, total: 8, title: "保存月报", detail: "正在把月报写入本地 Vault。" });
+      throwIfAborted(signal);
       const file = await this.host.monthlyReportRepository.save(this.host.settings, source, report, overwrite, expectedReportVersion);
       onProgress?.({ stage: 7, total: 8, title: "构建月度图谱", detail: "正在重新汇总整月事件进展、体验/方向线索、实体和明确关系。" });
-      this.host.emitMetricsChanged();
+      this.host.emitMetricsChanged(source.sourceFiles?.map((file: TFile) => file.path) ?? []);
       return { kind: "ready", period, source, file, summary: report.summary };
     })();
     this.monthlyReportInFlight.set(key, task);
@@ -149,7 +172,7 @@ export class ReportCoordinator {
     }
   }
 
-  async regenerateInvalidEvents(source: any, onProgress: ProgressCallback = null, progressPlan = { model: 2, write: 3, reload: 4, total: 4 }) {
+  async regenerateInvalidEvents(source: any, onProgress: ProgressCallback = null, progressPlan = { model: 2, write: 3, reload: 4, total: 4 }, signal: AbortSignal | null = null) {
     const mutable = source.eventInvalidSessions;
     if (mutable.length === 0) return source;
     const monthly = source.period.type === "monthly";
@@ -173,12 +196,14 @@ export class ReportCoordinator {
     onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: monthly ? "按自然周重新抽取" : "重新抽取事件", detail: monthly ? `正在依次处理 ${plans.length} 个自然周中的 ${mutable.length} 篇记录。` : `正在从 ${mutable.length} 篇记录的正文与切片重新抽取详细事件。` });
     let segment = 0;
     for (const plan of plans) {
+      throwIfAborted(signal);
       segment += 1;
       const knownElements = eventEntityDisambiguationProfiles(source.events.records, monthly ? 60 : 50, plan.sessions);
-      const generated = await generateEventBackfill(this.host.createProvider(), plan.sessions, knownElements, plan.maximum, plan.preservedSessions);
+      const generated = await generateEventBackfill(this.host.createProvider(signal), plan.sessions, knownElements, plan.maximum, plan.preservedSessions);
       results.push(...generated);
       onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: monthly ? "按自然周重新抽取" : "重新抽取事件", detail: monthly ? `已完成 ${segment}/${plans.length} 个自然周。` : `已完成 ${plan.sessions.length} 篇记录的模型抽取。` });
     }
+    throwIfAborted(signal);
     onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "校验并逐篇写回", detail: "正在校验新事件并替换对应章节；已有效事件保持不变。", current: 0, count: new Set(results.map((result) => result.source.filePath)).size });
     const outcome = await this.host.repository.applyEventBackfill(results, (current: number, count: number) => onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "校验并逐篇写回", detail: "正在保存通过校验的新事件。", current, count }));
     if (outcome.failed.length > 0) {
@@ -190,7 +215,7 @@ export class ReportCoordinator {
     return await (monthly ? this.host.monthlyReportRepository : this.host.weeklyReportRepository).collect(source.period);
   }
 
-  async calibrateWeeklyEvents(source: any, onProgress: ProgressCallback = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
+  async calibrateWeeklyEvents(source: any, onProgress: ProgressCallback = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }, signal: AbortSignal | null = null) {
     const mutable = source.eventCalibrationSessions;
     if (mutable.length === 0) return source;
     const preserved = source.eventReviewedSessions.reduce((sum: number, session: any) => sum + session.events.length, 0);
@@ -202,7 +227,9 @@ export class ReportCoordinator {
     const knownElements = eventEntityDisambiguationProfiles(source.events.records, 60, mutable);
     const preservedSessions = source.eventReviewedSessions;
     onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "校准图谱事件", detail: `正在统一 ${mutable.length} 篇记录中的事件、实体和关系。` });
-    const results = await generateEventBackfill(this.host.createProvider(), mutable, knownElements, maximum, preservedSessions);
+    throwIfAborted(signal);
+    const results = await generateEventBackfill(this.host.createProvider(signal), mutable, knownElements, maximum, preservedSessions);
+    throwIfAborted(signal);
     onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "写回日记事件", detail: "正在逐篇保存校准结果。", current: 0, count: new Set(results.map((result) => result.source.filePath)).size });
     const outcome = await this.host.repository.applyEventBackfill(results, (current: number, count: number) => onProgress?.({ stage: progressPlan.write, total: progressPlan.total, title: "写回日记事件", detail: "正在逐篇保存校准结果。", current, count }));
     if (outcome.failed.length > 0) {
@@ -214,7 +241,7 @@ export class ReportCoordinator {
     return await this.host.weeklyReportRepository.collect(source.period);
   }
 
-  async calibrateMonthlyEvents(source: any, onProgress: ProgressCallback = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }) {
+  async calibrateMonthlyEvents(source: any, onProgress: ProgressCallback = null, progressPlan = { model: 2, write: 3, reload: 4, total: 5 }, signal: AbortSignal | null = null) {
     const mutable = source.eventCalibrationSessions;
     if (mutable.length === 0) return source;
     const grouped = new Map<string, any[]>();
@@ -230,6 +257,7 @@ export class ReportCoordinator {
     onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `正在依次整理 ${grouped.size} 个自然周片段。` });
     let segment = 0;
     for (const [week, sessions] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      throwIfAborted(signal);
       segment += 1;
       const preservedSessions = preserved.filter((item: any) => (periodWeekStart(item.date) ?? item.date) === week);
       const preservedCount = preservedSessions.reduce((sum: number, session: any) => sum + session.events.length, 0);
@@ -239,11 +267,12 @@ export class ReportCoordinator {
         continue;
       }
       const knownElements = eventEntityDisambiguationProfiles(source.events.records, 60, sessions);
-      const generated = await generateEventBackfill(this.host.createProvider(), sessions, knownElements, maximum, preservedSessions);
+      const generated = await generateEventBackfill(this.host.createProvider(signal), sessions, knownElements, maximum, preservedSessions);
       results.push(...generated);
       onProgress?.({ stage: progressPlan.model, total: progressPlan.total, title: "按周校准月度事件", detail: `已完成 ${segment}/${grouped.size} 个自然周片段。` });
     }
     if (results.length === 0) return source;
+    throwIfAborted(signal);
     const changed = source.sourceFiles.find((file: TFile) => {
       const current = this.host.app.vault.getAbstractFileByPath(file.path);
       return !(current instanceof TFile) || current.stat.mtime !== expectedMtimes.get(file.path);

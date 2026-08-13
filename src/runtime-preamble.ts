@@ -1,4 +1,4 @@
-import * as import_obsidian7 from "obsidian";
+import * as obsidian from "obsidian";
 export { mindTraceDocument, mindTraceWindow, mindTraceWorkspaceDocument, showMindTraceNotice };
 
 function mindTraceDocument(element = null) {
@@ -15,7 +15,7 @@ function mindTraceWorkspaceDocument(app) {
 }
 
 function showMindTraceNotice(message, timeout = 4e3) {
-  const notice = new import_obsidian7.Notice(message, timeout);
+  const notice = new obsidian.Notice(message, timeout);
   notice.messageEl?.classList.add("mind-trace-notice");
   return notice;
 }

@@ -1,5 +1,5 @@
 // src/settings.ts
-import * as import_obsidian5 from "obsidian";
+import * as obsidian from "obsidian";
 import { CORE_QUESTIONS, DEFAULT_SETTINGS, configuredAdaptiveQuestionLimit, configuredCoreQuestions } from "./defaults";
 import { errorMessage, showMindTraceFieldError } from "./journal-view";
 import { attachLlmActivityStatus, captureMindTraceContext, isChatCompletionsProvider, openMindTraceOperation, restoreMindTraceContext } from "./providers";
@@ -42,7 +42,7 @@ var TONE_LABELS = {
   direct: "直接教练式",
   companion: "纯陪伴式"
 };
-var PrivacyPasswordModal = class extends import_obsidian5.Modal {
+var PrivacyPasswordModal = class extends obsidian.Modal {
   declare plugin: any;
   declare onDone: () => void;
   constructor(app, plugin, onDone) {
@@ -168,7 +168,7 @@ var PrivacyPasswordModal = class extends import_obsidian5.Modal {
     this.contentEl.empty();
   }
 };
-var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
+var MindTraceSettingTab = class extends obsidian.PluginSettingTab {
   declare plugin: any;
   constructor(app, plugin) {
     super(app, plugin);
@@ -192,16 +192,67 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       "决定日记保存在哪里，以及心迹如何回应你。"
     );
     const reportFolderDescriptionUpdates = [];
-    new import_obsidian5.Setting(journalSection).setName("日记目录").setDesc("心迹日记在当前 vault 中的保存目录").addText(
-      (text) => text.setPlaceholder("心迹日记").setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
-        this.plugin.settings.journalFolder = value.trim();
-        await this.plugin.saveSettings();
-        for (const updateDescription of reportFolderDescriptionUpdates) {
-          updateDescription();
+    let journalFolderText;
+    let committedJournalFolder = normalizeReportFolderValue(this.plugin.settings.journalFolder);
+    let journalFolderMigrationQueue = Promise.resolve();
+    const commitJournalFolder = (rawValue) => {
+      const nextFolder = normalizeReportFolderValue(rawValue);
+      journalFolderMigrationQueue = journalFolderMigrationQueue.then(async () => {
+        if (nextFolder === committedJournalFolder) {
+          journalFolderText?.setValue(committedJournalFolder);
+          return;
         }
-      })
+        if (nextFolder.length === 0) {
+          journalFolderText?.setValue(committedJournalFolder);
+          showMindTraceNotice("日记目录不能为空");
+          return;
+        }
+        let folderMoved = false;
+        try {
+          const movedFileCount = await this.moveJournalFolderContents(committedJournalFolder, nextFolder);
+          folderMoved = true;
+          this.plugin.settings.journalFolder = nextFolder;
+          await this.plugin.saveSettings();
+          committedJournalFolder = nextFolder;
+          journalFolderText?.setValue(nextFolder);
+          for (const updateDescription of reportFolderDescriptionUpdates) {
+            updateDescription();
+          }
+          this.plugin.refreshJournalViews();
+          this.plugin.refreshWeeklyEventViews();
+          showMindTraceNotice(
+            movedFileCount > 0
+              ? `日记目录已更新，已迁移 ${movedFileCount} 个文件`
+              : "日记目录已更新"
+          );
+        } catch (error) {
+          if (folderMoved) {
+            committedJournalFolder = nextFolder;
+            this.plugin.settings.journalFolder = nextFolder;
+            journalFolderText?.setValue(nextFolder);
+            showMindTraceNotice(`文件已移动，但日记目录设置保存失败：${errorMessage(error)}`, 8e3);
+            return;
+          }
+          journalFolderText?.setValue(committedJournalFolder);
+          showMindTraceNotice(`日记目录未修改：${errorMessage(error)}`, 8e3);
+        }
+      });
+      void journalFolderMigrationQueue;
+    };
+    new obsidian.Setting(journalSection).setName("日记目录").setDesc("心迹日记在当前 vault 中的保存目录；修改后会同时迁移原目录中的文件").addText(
+      (text) => {
+        journalFolderText = text;
+        text.setPlaceholder("Mind trace").setValue(committedJournalFolder);
+        text.inputEl.addEventListener("blur", () => commitJournalFolder(text.getValue()));
+        text.inputEl.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            text.inputEl.blur();
+          }
+        });
+      }
     );
-    const historySetting = new import_obsidian5.Setting(journalSection).setName("参考近期日记").setDesc(
+    const historySetting = new obsidian.Setting(journalSection).setName("参考近期日记").setDesc(
       `用于按需追问和日记反思；当前参考最近 ${this.plugin.settings.historyDays} 天，0 表示关闭`
     );
     let historyText;
@@ -249,7 +300,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         });
       }
     );
-    new import_obsidian5.Setting(journalSection).setName("反思语气").setDesc("控制洞察和建议的默认表达方式").addDropdown((dropdown) => {
+    new obsidian.Setting(journalSection).setName("反思语气").setDesc("控制洞察和建议的默认表达方式").addDropdown((dropdown) => {
       for (const [value, label] of Object.entries(TONE_LABELS)) {
         dropdown.addOption(value, label);
       }
@@ -258,7 +309,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian5.Setting(journalSection).setName("个人化说明").setDesc("例如：少用鼓励套话、关注工作边界、不要替我下结论").addTextArea(
+    new obsidian.Setting(journalSection).setName("个人化说明").setDesc("例如：少用鼓励套话、关注工作边界、不要替我下结论").addTextArea(
       (text) => text.setPlaceholder("可选").setValue(this.plugin.settings.customInstructions).onChange(async (value) => {
         this.plugin.settings.customInstructions = value.trim();
         await this.plugin.saveSettings();
@@ -268,16 +319,16 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       "回顾与分析",
       "按自然周与自然月生成结构化回顾；只有进入已解锁的心迹主页或回顾页时才会请求模型。"
     );
-    new import_obsidian5.Setting(analysisSection).setName("自动补齐上周周报").setDesc(
+    new obsidian.Setting(analysisSection).setName("自动补齐上周周报").setDesc(
       "每个应用会话对最近一个完整周最多自动尝试一次；生成前会联合校准未人工确认的事件并写回日记。"
     ).addToggle((toggle) => toggle.setValue(this.plugin.settings.weeklyReportAutoGenerate !== false).onChange(async (value) => {
       this.plugin.settings.weeklyReportAutoGenerate = value;
       await this.plugin.saveSettings();
       this.plugin.refreshJournalViews();
     }));
-    const minimumDays = Math.min(7, Math.max(4, Number(this.plugin.settings.weeklyReportMinimumDays) || 4));
+    const minimumDays = Math.min(7, Math.max(4, Number(this.plugin.settings.weeklyReportMinimumDays) || 5));
     this.plugin.settings.weeklyReportMinimumDays = minimumDays;
-    const minimumSetting = new import_obsidian5.Setting(analysisSection).setName("周报最低记录日").setDesc(
+    const minimumSetting = new obsidian.Setting(analysisSection).setName("周报最低记录日").setDesc(
       `当前为 ${minimumDays} 天；低于门槛时不调用模型`
     );
     minimumSetting.addSlider((slider) => {
@@ -291,7 +342,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     });
     const weeklyEventLimit = Math.min(100, Math.max(10, Math.round((Number(this.plugin.settings.weeklyEventLimit) || 50) / 5) * 5));
     this.plugin.settings.weeklyEventLimit = weeklyEventLimit;
-    const eventLimitSetting = new import_obsidian5.Setting(analysisSection).setName("每周事件上限").setDesc(
+    const eventLimitSetting = new obsidian.Setting(analysisSection).setName("每周事件上限").setDesc(
       `当前最多保留 ${weeklyEventLimit} 件事件；人工确认内容不会因降低上限而删除`
     );
     eventLimitSetting.addSlider((slider) => {
@@ -310,7 +361,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     });
     const weeklyGraphEventLimit = Math.min(50, Math.max(5, Math.min(weeklyEventLimit, Math.round(Number(this.plugin.settings.weeklyGraphEventLimit) || 20))));
     this.plugin.settings.weeklyGraphEventLimit = weeklyGraphEventLimit;
-    const graphLimitSetting = new import_obsidian5.Setting(analysisSection).setName("星图显示事件数").setDesc(
+    const graphLimitSetting = new obsidian.Setting(analysisSection).setName("星图显示事件数").setDesc(
       `当前同时显示 ${weeklyGraphEventLimit} 件；完整内容始终保留在事件账中`
     );
     graphLimitSetting.addSlider((slider) => {
@@ -324,7 +375,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       });
     });
     const addReportFolderSetting = (type, name, settingKey) => {
-      const setting = new import_obsidian5.Setting(analysisSection).setName(name);
+      const setting = new obsidian.Setting(analysisSection).setName(name);
       let text;
       let followButton;
       const updateDescription = () => {
@@ -372,7 +423,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       updateDescription();
     };
     addReportFolderSetting("weekly", "周报保存位置", "weeklyReportFolder");
-    new import_obsidian5.Setting(analysisSection).setName("自动补齐上月月报").setDesc(
+    new obsidian.Setting(analysisSection).setName("自动补齐上月月报").setDesc(
       "每个应用会话对最近一个完整月最多自动尝试一次；只创建缺失月报，不覆盖预览、过期或手工编辑文件。"
     ).addToggle((toggle) => toggle.setValue(this.plugin.settings.monthlyReportAutoGenerate !== false).onChange(async (value) => {
       this.plugin.settings.monthlyReportAutoGenerate = value;
@@ -381,7 +432,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     }));
     const minimumWeeks = Math.min(5, Math.max(1, Number(this.plugin.settings.monthlyReportMinimumWeeks) || 4));
     this.plugin.settings.monthlyReportMinimumWeeks = minimumWeeks;
-    const minimumMonthSetting = new import_obsidian5.Setting(analysisSection).setName("月报最低周报数").setDesc(
+    const minimumMonthSetting = new obsidian.Setting(analysisSection).setName("月报最低周报数").setDesc(
       `当前为 ${minimumWeeks} 份；完整自然月达到该数量的已生成周报后，才会生成正式月报`
     );
     minimumMonthSetting.addSlider((slider) => {
@@ -395,7 +446,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     });
     const monthlyGraphEventLimit = Math.min(200, Math.max(50, Math.round((Number(this.plugin.settings.monthlyGraphEventLimit) || 100) / 10) * 10));
     this.plugin.settings.monthlyGraphEventLimit = monthlyGraphEventLimit;
-    const monthlyGraphSetting = new import_obsidian5.Setting(analysisSection).setName("月图谱显示事件数").setDesc(
+    const monthlyGraphSetting = new obsidian.Setting(analysisSection).setName("月图谱显示事件数").setDesc(
       `当前月报星图显示 ${monthlyGraphEventLimit} 件；折叠事件账保留全部事件`
     );
     monthlyGraphSetting.addSlider((slider) => {
@@ -414,7 +465,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       "隐私与草稿",
       "心迹密码可选：设置后保护插件界面，不会加密 Vault 中的 Markdown 原文；未完成问答保存在插件 data.json 中。"
     );
-    new import_obsidian5.Setting(privacySection).setName("心迹密码").setDesc(
+    new obsidian.Setting(privacySection).setName("心迹密码").setDesc(
       this.plugin.isPasswordConfigured() ? this.plugin.isPrivacyUnlocked() ? "已设置 · 当前已解锁，两小时后自动锁定" : "已设置 · 当前已锁定" : "可选：未设置时可直接进入，首次进入时也可以选择暂不设置"
     ).addButton(
       (button) => button.setButtonText(this.plugin.isPasswordConfigured() ? "管理密码" : "设置密码").onClick(() => {
@@ -426,7 +477,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.display(true);
       })
     );
-    new import_obsidian5.Setting(privacySection).setName("清除未完成草稿").setDesc(
+    new obsidian.Setting(privacySection).setName("清除未完成草稿").setDesc(
       this.plugin.draft === null ? "当前没有未完成草稿" : "清除评分、问答和尚未保存的生成结果"
     ).addButton(
       (button) => button.setButtonText("清除").setWarning().setDisabled(this.plugin.draft === null).onClick(() => {
@@ -462,7 +513,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     const adaptiveQuestionLimit = configuredAdaptiveQuestionLimit(
       this.plugin.settings
     );
-    new import_obsidian5.Setting(section).setName("个性化问题最大数量").setDesc("这是追问上限，不要求问满；AI 会根据信息是否充足提前停止。0 表示不追问，最多可设 5 个").addText(
+    new obsidian.Setting(section).setName("个性化问题最大数量").setDesc("这是追问上限，不要求问满；AI 会根据信息是否充足提前停止。0 表示不追问，最多可设 5 个").addText(
       (text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
@@ -506,7 +557,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         "aria-label": "添加核心问题"
       }
     });
-    (0, import_obsidian5.setIcon)(addButton, "plus");
+    (0, obsidian.setIcon)(addButton, "plus");
     addButton.createSpan({ text: "添加" });
     addButton.disabled = coreQuestions.length >= 8;
     addButton.addEventListener("click", () => {
@@ -629,7 +680,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         }
       );
     }
-    new import_obsidian5.Setting(section).setName("恢复推荐问题").setDesc("恢复心迹默认的三道问题，不影响进行中的草稿").addButton(
+    new obsidian.Setting(section).setName("恢复推荐问题").setDesc("恢复心迹默认的三道问题，不影响进行中的草稿").addButton(
       (button) => button.setButtonText("恢复默认").onClick(() => {
         openMindTraceOperation(this.app, this.plugin, {
           eyebrow: "心迹设置 · 核心问题",
@@ -651,6 +702,126 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       })
     );
   }
+  async moveJournalFolderContents(previousPath, nextPath) {
+    if (previousPath === nextPath) {
+      return 0;
+    }
+    if (previousPath.length > 0 && nextPath.startsWith(`${previousPath}/`)) {
+      throw new Error("新日记目录不能位于旧目录内");
+    }
+    const source = this.app.vault.getAbstractFileByPath(previousPath);
+    const destination = this.app.vault.getAbstractFileByPath(nextPath);
+    if (destination !== null && !(destination instanceof obsidian.TFolder)) {
+      throw new Error(`无法迁移日记目录：${nextPath} 已经是文件`);
+    }
+    if (source === null) {
+      return 0;
+    }
+    if (!(source instanceof obsidian.TFolder)) {
+      throw new Error(`无法迁移日记目录：${previousPath} 已经是文件`);
+    }
+
+    const files = [];
+    const sourceFolders = [];
+    const collect = (folder) => {
+      sourceFolders.push(folder);
+      for (const child of [...folder.children]) {
+        if (child instanceof obsidian.TFolder) {
+          collect(child);
+        } else if (child instanceof obsidian.TFile) {
+          files.push(child);
+        }
+      }
+    };
+    collect(source);
+
+    if (destination === null) {
+      await this.app.fileManager.renameFile(source, nextPath);
+      return files.length;
+    }
+    if (files.length === 0) {
+      return 0;
+    }
+
+    const sourcePrefix = `${previousPath}/`;
+    const entries = files.map((file) => {
+      const oldPath = file.path;
+      const relativePath = oldPath.startsWith(sourcePrefix) ? oldPath.slice(sourcePrefix.length) : file.name;
+      return {
+        file,
+        oldPath,
+        relativePath,
+        targetPath: (0, obsidian.normalizePath)(`${nextPath}/${relativePath}`)
+      };
+    });
+    const folderPaths = new Set<string>();
+    for (const entry of entries) {
+      const parts = entry.relativePath.split("/");
+      parts.pop();
+      let current = nextPath;
+      for (const part of parts) {
+        current = (0, obsidian.normalizePath)(`${current}/${part}`);
+        folderPaths.add(current);
+      }
+      const existing = this.app.vault.getAbstractFileByPath(entry.targetPath);
+      if (existing !== null) {
+        throw new Error(`无法迁移日记目录：目标位置已有文件 ${entry.targetPath}`);
+      }
+    }
+    const foldersToCreate = [...folderPaths].sort(
+      (left, right) => left.split("/").length - right.split("/").length
+    );
+    for (const folderPath of foldersToCreate) {
+      const existing = this.app.vault.getAbstractFileByPath(folderPath);
+      if (existing !== null && !(existing instanceof obsidian.TFolder)) {
+        throw new Error(`无法迁移日记目录：${folderPath} 已经是文件`);
+      }
+    }
+
+    const createdFolders = [];
+    const movedEntries = [];
+    try {
+      for (const folderPath of foldersToCreate) {
+        if (this.app.vault.getAbstractFileByPath(folderPath) === null) {
+          await this.app.vault.createFolder(folderPath);
+          createdFolders.push(folderPath);
+        }
+      }
+      for (const entry of entries) {
+        await this.app.fileManager.renameFile(entry.file, entry.targetPath);
+        movedEntries.push(entry);
+      }
+    } catch (error) {
+      for (const entry of [...movedEntries].reverse()) {
+        const movedFile = this.app.vault.getAbstractFileByPath(entry.targetPath);
+        if (movedFile instanceof obsidian.TFile) {
+          try {
+            await this.app.fileManager.renameFile(movedFile, entry.oldPath);
+          } catch {
+            // Keep the original error; the notice will identify the migration failure.
+          }
+        }
+      }
+      for (const folderPath of [...createdFolders].reverse()) {
+        const createdFolder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (createdFolder instanceof obsidian.TFolder && createdFolder.children.length === 0) {
+          try {
+            await this.app.fileManager.trashFile(createdFolder);
+          } catch {
+            // An empty helper folder is harmless if Obsidian still has it locked.
+          }
+        }
+      }
+      throw new Error(`迁移日记目录时中断：${errorMessage(error)}`);
+    }
+
+    for (const folder of [...sourceFolders].reverse()) {
+      if (folder.children.length === 0) {
+        await this.app.fileManager.trashFile(folder);
+      }
+    }
+    return entries.length;
+  }
   createQuestionAction(container, icon, label, disabled, action) {
     const button = container.createEl("button", {
       cls: "clickable-icon",
@@ -660,7 +831,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         title: label
       }
     });
-    (0, import_obsidian5.setIcon)(button, icon);
+    (0, obsidian.setIcon)(button, icon);
     button.disabled = disabled;
     button.addEventListener("click", action);
   }
@@ -668,7 +839,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     const section = this.containerEl.createEl("section", {
       cls: "mind-trace-settings-section"
     });
-    new import_obsidian5.Setting(section).setName(title).setDesc(description).setClass("mind-trace-settings-section-heading").setHeading();
+    new obsidian.Setting(section).setName(title).setDesc(description).setClass("mind-trace-settings-section-heading").setHeading();
     return section;
   }
   renderProviderCard(container) {
@@ -676,7 +847,7 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
     container.addClass("mind-trace-provider-card");
     const kind = this.plugin.settings.activeProvider;
     const configuration = this.plugin.settings.providers[kind];
-    new import_obsidian5.Setting(container).setName("模型服务").setDesc("选择当前用于追问、整理日记以及生成周报、月报的服务").addDropdown((dropdown) => {
+    new obsidian.Setting(container).setName("模型服务").setDesc("选择当前用于追问、整理日记以及生成周报、月报的服务").addDropdown((dropdown) => {
       dropdown.selectEl.setAttribute("data-mind-trace-focus-key", "active-provider");
       for (const [value, label] of Object.entries(PROVIDER_LABELS)) {
         dropdown.addOption(value, label);
@@ -687,14 +858,12 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.renderProviderCard(container);
       });
     });
-    const modelSetting = new import_obsidian5.Setting(container).setName("模型与思考").setDesc(
-      kind === "openai-compatible" ? "填写服务商支持的模型 ID。" : "模型与深度思考在同一行；开启思考会更慢、消耗更多 token。"
-    );
     const modelPresets = PROVIDER_MODEL_PRESETS[kind];
+    const modelSetting = modelPresets !== void 0 || kind !== "openai-compatible" ? new obsidian.Setting(container).setName("模型与思考").setClass("mind-trace-model-setting") : null;
     if (modelPresets !== void 0) {
       const presetValues = new Set(modelPresets.map((preset) => preset.value));
       const customModel = !presetValues.has(configuration.model);
-      modelSetting.addDropdown((dropdown) => {
+      modelSetting?.addDropdown((dropdown) => {
         dropdown.selectEl.setAttribute("data-mind-trace-focus-key", "provider-model");
         for (const preset of modelPresets) {
           dropdown.addOption(preset.value, preset.label);
@@ -706,33 +875,8 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
           this.renderProviderCard(container);
         });
       });
-      if (customModel) {
-        modelSetting.addText((text) => text.setPlaceholder("输入模型 ID").setValue(configuration.model).onChange(async (value) => {
-          configuration.model = value.trim();
-          await this.plugin.saveProviderSettings();
-        }));
-      }
-    } else {
-      modelSetting.addDropdown((dropdown) => {
-        dropdown.selectEl.setAttribute("data-mind-trace-focus-key", "provider-model");
-        if (configuration.model.length > 0) {
-          dropdown.addOption(configuration.model, configuration.model);
-        }
-        dropdown.addOption(CUSTOM_MODEL_OPTION, "自定义…");
-        dropdown.setValue(configuration.model.length > 0 ? configuration.model : CUSTOM_MODEL_OPTION).onChange(async (value) => {
-          if (value === CUSTOM_MODEL_OPTION) {
-            configuration.model = "";
-            await this.plugin.saveProviderSettings();
-            this.renderProviderCard(container);
-          }
-        });
-      });
-      modelSetting.addText((text) => text.setPlaceholder("输入模型 ID").setValue(configuration.model).onChange(async (value) => {
-        configuration.model = value.trim();
-        await this.plugin.saveProviderSettings();
-      }));
     }
-    if (kind !== "openai-compatible") {
+    if (modelSetting !== null && kind !== "openai-compatible") {
       modelSetting.addDropdown((dropdown) => {
         dropdown.selectEl.setAttribute("data-mind-trace-focus-key", "provider-thinking");
         for (const [value, label] of Object.entries(THINKING_LABELS)) {
@@ -744,7 +888,15 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         });
       });
     }
-    const credentialSetting = new import_obsidian5.Setting(container).setName("API key").setDesc(this.plugin.activeCredentialStatus());
+    const modelNameSetting = new obsidian.Setting(container).setName("具体模型名称").setClass("mind-trace-model-name-setting");
+    if (kind === "openai-compatible") {
+      modelNameSetting.setDesc("填写服务商支持的模型 ID。");
+    }
+    modelNameSetting.addText((text) => text.setPlaceholder("输入模型 ID").setValue(configuration.model).onChange(async (value) => {
+      configuration.model = value.trim();
+      await this.plugin.saveProviderSettings();
+    }));
+    const credentialSetting = new obsidian.Setting(container).setName("API key").setDesc(this.plugin.activeCredentialStatus());
     const refreshCredentialStatus = () => {
       credentialSetting.setDesc(this.plugin.activeCredentialStatus());
     };
@@ -760,21 +912,21 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       });
     }
     if (kind !== "openai-compatible" || configuration.credentialSource === "secret-storage") {
-      credentialSetting.addComponent((componentContainer) => new import_obsidian5.SecretComponent(this.app, componentContainer).setValue(configuration.secretId).onChange(async (value) => {
+      credentialSetting.addComponent((componentContainer) => new obsidian.SecretComponent(this.app, componentContainer).setValue(configuration.secretId).onChange(async (value) => {
         configuration.secretId = value;
         await this.plugin.saveProviderSettings();
         refreshCredentialStatus();
       }));
     }
     if (isChatCompletionsProvider(kind)) {
-      new import_obsidian5.Setting(container).setName("Base URL").setDesc("插件会在该地址后请求 chat/completions").addText(
+      new obsidian.Setting(container).setName("Base URL").setDesc("插件会在该地址后请求 chat/completions").addText(
         (text) => text.setPlaceholder(DEFAULT_SETTINGS.providers[kind].baseUrl).setValue(configuration.baseUrl).onChange(async (value) => {
           configuration.baseUrl = value.trim();
           await this.plugin.saveProviderSettings();
         })
       );
     }
-    const testSetting = new import_obsidian5.Setting(container).setName("测试连接").setDesc("发送一个最小请求，验证当前模型、地址和密钥");
+    const testSetting = new obsidian.Setting(container).setName("测试连接").setDesc("发送一个最小请求，验证当前模型、地址和密钥");
     testSetting.addButton((button) => button.setButtonText("测试").setDisabled(this.connectionTestBusy).onClick(() => {
       void this.runConnectionTest(container, button);
     }));
@@ -797,9 +949,9 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
       description: "发送一个最小请求，验证模型名称、服务地址和鉴权信息。",
       confirm: false,
       stages: ["准备连接信息", "等待模型响应"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         update({ stage: 1, total: 2, title: "准备连接信息", detail: "正在检查当前模型与鉴权配置。" });
-        const provider = this.plugin.createProvider();
+        const provider = this.plugin.createProvider(signal);
         update({ stage: 2, total: 2, title: "等待模型响应", detail: "已发送最小测试请求。" });
         return await provider.generate([
           { role: "user", content: "只回复：连接成功" }
@@ -820,6 +972,15 @@ var MindTraceSettingTab = class extends import_obsidian5.PluginSettingTab {
         connectionStatus.addClass("is-error");
         connectionStatus.createSpan({ cls: "mind-trace-llm-status-primary", text: "模型连接失败" });
         connectionStatus.createSpan({ cls: "mind-trace-llm-status-detail", text: errorMessage(error) });
+        this.connectionTestBusy = false;
+        button.setDisabled(false);
+      },
+      onCancel: () => {
+        stopConnectionStatus();
+        connectionStatus.empty();
+        connectionStatus.addClass("is-error");
+        connectionStatus.createSpan({ cls: "mind-trace-llm-status-primary", text: "连接测试已取消" });
+        connectionStatus.createSpan({ cls: "mind-trace-llm-status-detail", text: "已停止等待模型响应。" });
         this.connectionTestBusy = false;
         button.setDisabled(false);
       },

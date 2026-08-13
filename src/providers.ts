@@ -1,6 +1,5 @@
 // src/providers.ts
-import * as import_obsidian2 from "obsidian";
-import * as import_obsidian7 from "obsidian";
+import * as obsidian from "obsidian";
 import { JOURNAL_VIEW_TYPE, JournalView, errorMessage } from "./journal-view";
 import { renderPrivacyGate } from "./privacy";
 import { mindTraceDocument, mindTraceWindow, mindTraceWorkspaceDocument, showMindTraceNotice } from "./runtime-preamble";
@@ -266,7 +265,7 @@ async function requestUrlWithTimeout(request, timeoutMs, signal) {
   let timeout = null;
   let onAbort = null;
   const requestWindow = activeWindow;
-  const pending: Promise<any>[] = [(0, import_obsidian2.requestUrl)(request)];
+  const pending: Promise<any>[] = [(0, obsidian.requestUrl)(request)];
   pending.push(new Promise((_, reject) => {
     timeout = requestWindow.setTimeout(() => reject(new Error("模型请求超时，请稍后重试")), timeoutMs);
   }));
@@ -489,7 +488,7 @@ function restoreMindTraceContext(root, context) {
     }
   });
 }
-var MindTraceConfirmModal = class extends import_obsidian7.Modal {
+var MindTraceConfirmModal = class extends obsidian.Modal {
   declare plugin: any;
   declare configuration: any;
   declare onStart: (() => void) | null;
@@ -539,7 +538,7 @@ var MindTraceConfirmModal = class extends import_obsidian7.Modal {
     mindTraceWindow(this.contentEl).requestAnimationFrame(() => confirm.focus({ preventScroll: true }));
   }
 };
-var ObservationFeedbackModal = class extends import_obsidian7.Modal {
+var ObservationFeedbackModal = class extends obsidian.Modal {
   declare plugin: any;
   declare item: any;
   declare feedback: any;
@@ -605,7 +604,7 @@ var ObservationFeedbackModal = class extends import_obsidian7.Modal {
     mindTraceWindow(this.contentEl).requestAnimationFrame(() => save.focus({ preventScroll: true }));
   }
 };
-var JournalRegenerationPreviewModal = class extends import_obsidian7.Modal {
+var JournalRegenerationPreviewModal = class extends obsidian.Modal {
   declare plugin: any;
   declare payload: any;
   declare onConfirm: any;
@@ -644,7 +643,7 @@ var JournalRegenerationPreviewModal = class extends import_obsidian7.Modal {
     this.contentEl.empty();
   }
 };
-var MindTraceOperationResultModal = class extends import_obsidian7.Modal {
+var MindTraceOperationResultModal = class extends obsidian.Modal {
   declare plugin: any;
   declare configuration: any;
   declare succeeded: boolean;
@@ -745,6 +744,7 @@ var MindTraceTaskToast = class {
   actionsEl = null;
   shellBuilt = false;
   cancelled = false;
+  abortController = null;
   open() {
     if (this.plugin.trackOperation?.(this) === false) {
       this.cancelled = true;
@@ -818,9 +818,16 @@ var MindTraceTaskToast = class {
     this.card = null;
     this.plugin.untrackOperation?.(this);
   }
-  cancelFromPlugin() {
+  cancel(showNotice = true) {
+    if (this.cancelled || this.phase !== "running") return;
     this.cancelled = true;
+    this.abortController?.abort();
+    if (showNotice) void this.configuration.onCancel?.();
     this.close();
+    if (showNotice) showMindTraceNotice("任务已取消，已停止等待模型响应。", 6e3);
+  }
+  cancelFromPlugin() {
+    this.cancel(false);
   }
   minimize() {
     this.minimized = true;
@@ -849,6 +856,7 @@ var MindTraceTaskToast = class {
     this.phase = "running";
     this.settled = false;
     this.error = null;
+    this.abortController = new AbortController();
     this.startedAt = Date.now();
     this.progress = {
       stage: 1,
@@ -857,7 +865,7 @@ var MindTraceTaskToast = class {
       detail: this.configuration.runningDetail ?? "正在准备所需内容。"
     };
     const slow = Symbol("slow");
-    const task = Promise.resolve().then(() => this.configuration.run((progress) => this.updateProgress(progress)));
+    const task = Promise.resolve().then(() => this.configuration.run((progress) => this.updateProgress(progress), { signal: this.abortController.signal }));
     const minimumDelay = new Promise((resolve) => this.ownerWindow.setTimeout(() => resolve(slow), 120));
     try {
       const winner = await Promise.race([task.then((value) => ({ value })), minimumDelay]);
@@ -960,6 +968,8 @@ var MindTraceTaskToast = class {
       copy.createSpan({ cls: "mind-trace-toast-pill-elapsed" });
       const expand = pill.createEl("button", { text: "展开", attr: { type: "button", "aria-label": "展开任务进度" } });
       expand.addEventListener("click", () => this.expand());
+      const cancel = pill.createEl("button", { cls: "mind-trace-toast-pill-cancel", text: "取消", attr: { type: "button", "aria-label": "取消任务" } });
+      cancel.addEventListener("click", () => this.cancel());
       this.paintProgress();
       this.elapsedTimer = this.ownerWindow.setInterval(() => this.paintProgress(), 1e3);
       return;
@@ -991,6 +1001,8 @@ var MindTraceTaskToast = class {
       this.stopLlmStatus = attachLlmActivityStatus(llm, this.plugin, this.progress?.title ?? "正在准备任务…");
       const background = this.actionsEl.createEl("button", { text: "后台继续", attr: { type: "button" } });
       background.addEventListener("click", () => this.minimize());
+      const cancel = this.actionsEl.createEl("button", { cls: "mod-warning", text: "取消任务", attr: { type: "button" } });
+      cancel.addEventListener("click", () => this.cancel());
       this.paintProgress();
       this.elapsedTimer = this.ownerWindow.setInterval(() => this.paintProgress(), 1e3);
       return;
@@ -1012,7 +1024,7 @@ async function trashMindTraceFile(view, file, label) {
     return;
   }
   const current = view.app.vault.getAbstractFileByPath(file.path);
-  if (!(current instanceof import_obsidian7.TFile)) {
+  if (!(current instanceof obsidian.TFile)) {
     showMindTraceNotice(`这篇${label}已经移动或删除`);
     return;
   }
@@ -1020,7 +1032,7 @@ async function trashMindTraceFile(view, file, label) {
     view.plugin.assertOperational?.();
     await view.app.fileManager.trashFile(current);
     view.plugin.historyIndex?.invalidate(file.path);
-    view.plugin.emitMetricsChanged();
+    view.plugin.emitMetricsChanged([file.path]);
     showMindTraceNotice(`${label}已删除`);
     view.leaf.detach();
   } catch (error) {
@@ -1029,7 +1041,7 @@ async function trashMindTraceFile(view, file, label) {
 }
 function confirmMindTraceFileDeletion(view, label) {
   const file = view.file;
-  if (!(file instanceof import_obsidian7.TFile)) {
+  if (!(file instanceof obsidian.TFile)) {
     showMindTraceNotice(`这篇${label}已经移动或删除`);
     return;
   }
@@ -1046,7 +1058,7 @@ function confirmMindTraceFileDeletion(view, label) {
 }
 
 var OBSERVATION_VIEW_TYPE = "mind-trace-observation-file-view";
-var SavedObservationView = class extends import_obsidian7.TextFileView {
+var SavedObservationView = class extends obsidian.TextFileView {
   declare plugin: any;
   constructor(leaf, plugin) {
     super(leaf);

@@ -1,5 +1,5 @@
 // src/saved-journal-view.ts
-import * as import_obsidian3 from "obsidian";
+import * as obsidian from "obsidian";
 import { EVENT_KIND_LABELS, EVENT_LABEL_KINDS, EVENT_RELATION_LABEL_VALUES, EVENT_ROLES, EVENT_ROLE_LABELS, EVENT_ROLE_LABEL_VALUES, EVENT_SCHEMA_VERSION, EVENT_STATUSES, EVENT_STATUS_LABELS, EVENT_STATUS_LABEL_VALUES, EVENT_TRACE_CERTAINTIES, EVENT_TRACE_CERTAINTY_LABELS, EVENT_TRACE_KINDS, EVENT_TRACE_KIND_LABELS, EVENT_TRACE_KIND_LABEL_VALUES, EVENT_TRACE_KIND_LAYERS, EVENT_TRACE_LAYER_LABELS, EVENT_TYPE_LABELS, EVENT_TYPE_LABEL_VALUES, JOURNAL_SCHEMA_VERSION, MAX_SESSION_EVENTS, eventEntityKey, normalizeEvent, normalizeEventElementName, normalizeEventEntity, normalizeEventRelation, validateEvents } from "./conversation";
 import { addLocalDays, localDateString, parseLocalDate } from "./date-utils";
 import { EventEditor, generateEventBackfill, generateJournal, generateRatingAssessment } from "./generation";
@@ -1787,17 +1787,17 @@ function renderPrintableJournal(container, document2) {
 // src/saved-journal-view.ts
 var SAVED_JOURNAL_VIEW_TYPE = "mind-trace-saved-journal-view";
 function parseFrontmatter(content, documentLabel = "心迹日记") {
-  const info = (0, import_obsidian3.getFrontMatterInfo)(content);
+  const info = (0, obsidian.getFrontMatterInfo)(content);
   if (!info.exists) {
     throw new Error(`缺少${documentLabel}属性`);
   }
-  const parsed = (0, import_obsidian3.parseYaml)(info.frontmatter);
+  const parsed = (0, obsidian.parseYaml)(info.frontmatter);
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`${documentLabel}属性无法识别`);
   }
   return Object.fromEntries(Object.entries(parsed));
 }
-var SavedJournalView = class extends import_obsidian3.TextFileView {
+var SavedJournalView = class extends obsidian.TextFileView {
   declare plugin: any;
   constructor(leaf, plugin) {
     super(leaf);
@@ -1993,7 +1993,7 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       confirmLabel: "生成校样",
       warning: reviewedEventCount > 0,
       stages: ["读取原始问答", "生成最新版内容", "独立评估状态", "准备校样"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.journalRegenerationBusy = true;
         this.render(true);
         const expectedMtime = file.stat.mtime;
@@ -2014,9 +2014,10 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
             generated: null
           };
           const [entry, assessment] = await Promise.all([
-            generateJournal(this.plugin.createProvider(), draft, history, this.plugin.settings),
-            generateRatingAssessment(this.plugin.createProvider(), draft)
+            generateJournal(this.plugin.createProvider(signal), draft, history, this.plugin.settings),
+            generateRatingAssessment(this.plugin.createProvider(signal), draft)
           ]);
+          if (signal.aborted) throw new Error("任务已取消");
           return { sessionIndex: index, source: session, entry, assessment, generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
         });
         update({ stage: 3, total: 4, title: "独立评估状态", detail: "已完成基于原始回答的状态对照。" });
@@ -2029,6 +2030,10 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
         new JournalRegenerationPreviewModal(this.app, this.plugin, payload, (value) => this.commitJournalRegeneration(value)).open();
       },
       onError: () => {
+        this.journalRegenerationBusy = false;
+        this.render(true);
+      },
+      onCancel: () => {
         this.journalRegenerationBusy = false;
         this.render(true);
       },
@@ -2045,7 +2050,7 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       this.data = await this.plugin.repository.updateJournalSessions(payload.file, payload.document, payload.replacements, payload.expectedMtime);
       invalidateParsedJournal(payload.file.path);
       this.plugin.historyIndex.invalidate(payload.file.path);
-      this.plugin.emitMetricsChanged();
+      this.plugin.emitMetricsChanged([payload.file.path]);
       this.plugin.refreshWeeklyEventViews();
       showMindTraceNotice(payload.replacements.length > 1 ? "当天记录已更新到最新版" : "这次记录已更新到最新版");
     } finally {
@@ -2146,7 +2151,7 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
       description: `将把这次记录的日记正文与切片发送给 ${providerLabel}，使用当前事件结构重新抽取；不会发送原始问答。原事件章节只在生成与校验成功后替换。`,
       confirmLabel: "重新生成",
       stages: ["读取这次记录", "重新抽取事件", "校验事件结构", "写回日记"],
-      run: async (update) => {
+      run: async (update, { signal }) => {
         this.eventSaveBusy = true;
         this.eventSaveError = "";
         this.render(true);
@@ -2155,7 +2160,8 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
           throw new Error("日记已经发生修改，请重新打开后再生成事件");
         }
         update({ stage: 2, total: 4, title: "重新抽取事件", detail: "正在提取事件事实、主观体验、目标与未决事项。" });
-        const results = await generateEventBackfill(this.plugin.createProvider(), [source], [], MAX_SESSION_EVENTS, []);
+        const results = await generateEventBackfill(this.plugin.createProvider(signal), [source], [], MAX_SESSION_EVENTS, []);
+        if (signal.aborted) throw new Error("任务已取消");
         update({ stage: 3, total: 4, title: "校验事件结构", detail: `已生成 ${results[0]?.events.length ?? 0} 件记录，正在验证字段与证据边界。` });
         update({ stage: 4, total: 4, title: "写回日记", detail: "正在替换不匹配的事件章节。" });
         const outcome = await this.plugin.repository.applyEventBackfill(results);
@@ -2171,6 +2177,10 @@ var SavedJournalView = class extends import_obsidian3.TextFileView {
         this.render(true);
       },
       onError: async () => {
+        this.eventSaveBusy = false;
+        this.render(true);
+      },
+      onCancel: () => {
         this.eventSaveBusy = false;
         this.render(true);
       },

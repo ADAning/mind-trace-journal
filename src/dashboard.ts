@@ -1,5 +1,5 @@
 // src/dashboard.ts
-import * as import_obsidian4 from "obsidian";
+import * as obsidian from "obsidian";
 import { metricSnapshot } from "./conversation";
 import { addLocalDays, localDateString, localDayOrdinal, startOfLocalDay } from "./date-utils";
 import { average, calculateStreaks, themeFrequency } from "./metrics";
@@ -499,7 +499,7 @@ var DashboardComponent = class {
       cls: "clickable-icon mind-trace-cal-nav-button",
       attr: { type: "button", "aria-label": "上一个月" }
     });
-    (0, import_obsidian4.setIcon)(previous, "chevron-left");
+    (0, obsidian.setIcon)(previous, "chevron-left");
     nav.createSpan({
       cls: "mind-trace-cal-month",
       text: `${this.calendarCursor.getFullYear()}年${this.calendarCursor.getMonth() + 1}月`
@@ -508,7 +508,7 @@ var DashboardComponent = class {
       cls: "clickable-icon mind-trace-cal-nav-button",
       attr: { type: "button", "aria-label": "下一个月" }
     });
-    (0, import_obsidian4.setIcon)(next, "chevron-right");
+    (0, obsidian.setIcon)(next, "chevron-right");
     previous.addEventListener("click", () => {
       this.shiftCalendar(-1);
     });
@@ -632,7 +632,7 @@ var DashboardComponent = class {
       cls: "clickable-icon mind-trace-heatmap-nav-button",
       attr: { type: "button", "aria-label": "上一年" }
     });
-    (0, import_obsidian4.setIcon)(previous, "chevron-left");
+    (0, obsidian.setIcon)(previous, "chevron-left");
     nav.createSpan({
       cls: "mind-trace-heatmap-year",
       text: `${this.heatmapYear}年`
@@ -641,7 +641,7 @@ var DashboardComponent = class {
       cls: "clickable-icon mind-trace-heatmap-nav-button",
       attr: { type: "button", "aria-label": "下一年" }
     });
-    (0, import_obsidian4.setIcon)(next, "chevron-right");
+    (0, obsidian.setIcon)(next, "chevron-right");
     previous.addEventListener("click", () => {
       this.shiftHeatmapYear(-1);
     });
@@ -896,7 +896,7 @@ var DashboardComponent = class {
           row.createSpan({ cls: "mind-trace-event-meta", text: `${event.date.slice(5).replace("-", "/")} ${event.time}` });
           row.createSpan({ cls: "mind-trace-event-type", text: event.type });
           row.createSpan({ cls: "mind-trace-event-title", text: event.title });
-          (0, import_obsidian4.setIcon)(row.createSpan({ cls: "mind-trace-event-row-icon", attr: { "aria-hidden": "true" } }), "arrow-right");
+          (0, obsidian.setIcon)(row.createSpan({ cls: "mind-trace-event-row-icon", attr: { "aria-hidden": "true" } }), "arrow-right");
           if (this.onOpenEvent !== null) {
             row.addEventListener("click", () => this.onOpenEvent(event));
           }

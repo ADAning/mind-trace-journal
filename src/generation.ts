@@ -1,5 +1,5 @@
 // src/generation.ts
-import * as import_obsidian4 from "obsidian";
+import * as obsidian from "obsidian";
 import { EVENT_KINDS, EVENT_KIND_LABELS, EVENT_RELATION_LABELS, EVENT_RELATION_TYPES, EVENT_ROLES, EVENT_ROLE_LABELS, EVENT_STATUSES, EVENT_STATUS_LABELS, EVENT_TRACE_CERTAINTIES, EVENT_TRACE_CERTAINTY_LABELS, EVENT_TRACE_KINDS, EVENT_TRACE_KIND_LABELS, EVENT_TRACE_KIND_LAYERS, EVENT_TYPES, EVENT_TYPE_LABELS, MAX_EVENT_ARGUMENTS, MAX_EVENT_RELATIONS, MAX_EVENT_TRACES, MAX_SESSION_EVENTS, buildEventBackfillMessages, buildFollowUpMessages, buildJournalMessages, buildMonthlyReportMessages, buildObservationMessages, buildRatingMessages, buildRepairMessages, buildWeeklyReportMessages, computeObservationMaturity, eventEntityKey, normalizeEvent, observationEvidenceCatalog, parseEventBackfill, parseFollowUp, parseGeneratedEntry, parseMonthlyReport, parseObservation, parseRatingAssessment, parseWeeklyReport, validateEvents } from "./conversation";
 import { autoGrow } from "./journal-view";
 
@@ -407,7 +407,7 @@ var EventEditor = class {
             trace.evidence = evidence.value;
           });
           const removeTrace = row.createEl("button", { attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的线索 ${traceIndex + 1}` } });
-          (0, import_obsidian4.setIcon)(removeTrace, "x");
+          (0, obsidian.setIcon)(removeTrace, "x");
           removeTrace.addEventListener("click", () => {
             event.traces.splice(traceIndex, 1);
             renderTraces();
@@ -461,7 +461,7 @@ var EventEditor = class {
           const removeElement = row.createEl("button", {
             attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的论元 ${argumentIndex + 1}` }
           });
-          (0, import_obsidian4.setIcon)(removeElement, "x");
+          (0, obsidian.setIcon)(removeElement, "x");
           removeElement.addEventListener("click", () => {
             event.arguments.splice(argumentIndex, 1);
             event.relations = [];
@@ -519,7 +519,7 @@ var EventEditor = class {
           });
           relationLabel.addEventListener("input", sync);
           const removeRelation = row.createEl("button", { attr: { type: "button", "aria-label": `移除事件 ${eventIndex + 1} 的关系 ${relationIndex + 1}` } });
-          (0, import_obsidian4.setIcon)(removeRelation, "x");
+          (0, obsidian.setIcon)(removeRelation, "x");
           removeRelation.addEventListener("click", () => {
             event.relations.splice(relationIndex, 1);
             renderRelations();
